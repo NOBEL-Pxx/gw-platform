@@ -1,0 +1,57 @@
+# Environment files (contain API keys)
+.env.development
+.env.production
+**/application-local.properties
+version-snapshots/
+**/application-dev.properties
+.env
+
+.env.local
+
+.env.*.local
+
+# R6.22 — Git-as-source-of-truth 扩展（追加，不覆盖原规则）
+# Build artifacts
+gw-frontend/node_modules/
+gw-frontend/dist/
+gw-frontend/build/
+gw-backend/**/target/
+gw-backend/**/build/
+gw-pipeline/__pycache__/
+gw-pipeline/**/__pycache__/
+gw-pipeline/.venv/
+gw-pipeline/venv/
+gw-mcp-server/node_modules/
+gw-mcp-server/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+gw-frontend/npm-cache/
+
+# Runtime data (on disk, not in version control)
+docker-data/
+docker-cache/
+
+# Local-only deploy artifacts
+deploy.local/
+*.local.json
+*.local.yml
+
+# Hot-deploy scratch (R6.22 policy: docker cp only for emergency)
+hot-deploy/
+docker-cp-scratch/
+
+# Version-snapshot backup (replaced by git tag — R6.22)
+version-snapshots/

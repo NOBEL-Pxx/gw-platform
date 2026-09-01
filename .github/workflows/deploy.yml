@@ -1,0 +1,42 @@
+name: R6.22 Deploy
+
+on:
+  push:
+    tags:
+      - 'v*-R*'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Pipeline stage'
+        required: true
+        default: 'check'
+        type: choice
+        options: [check, build, test, deploy, rollback]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, gw-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for tag operations
+
+      - name: Verify version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+            echo "Tag: $TAG"
+            bash scripts/ci/deploy.sh check
+          fi
+
+      - name: Build images
+        if: github.event.inputs.stage == 'build' || github.event_name == 'push'
+        run: bash scripts/ci/deploy.sh build "${{ github.ref_name }}"
+
+      - name: Run tests
+        if: github.event.inputs.stage != 'rollback'
+        run: bash scripts/ci/deploy.sh test "${{ github.ref_name }}"
+
+      - name: Deploy
+        if: github.event.inputs.stage == 'deploy' || github.event_name == 'push'
+        run: bash scripts/ci/deploy.sh deploy "${{ github.ref_name }}" local

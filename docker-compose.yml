@@ -1,0 +1,409 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave Platform — Docker Compose (v4.37)
+# Security-hardened: non-root users, read-only FS, no-new-privileges, cap_drop: ALL
+# v4.37: Docker security hardening — see gw-pipeline/Dockerfile for user details
+#
+# DEVELOPMENT (default):  docker compose up -d
+#   → DB ports exposed to host for tools (mongosh, curl, etc.)
+#
+# PRODUCTION:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   → Only frontend HTTP/HTTPS ports accessible. All other services internal.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── DATA TIER (gw-db network only — isolated from application tier) ──────
+
+  mongodb:
+    image: mongo:6.0.26
+    container_name: gw-mongodb
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    # Use: docker exec -it gw-mongodb mongosh for production access
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set}
+      MONGO_INITDB_DATABASE: gravitationalwave
+      MONGO_APP_USER: gw-app
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD must be set}
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - ./docker-data/mongodb-data:/data/db
+      - ./init_mongo.js:/docker-entrypoint-initdb.d/init_mongo.js:ro
+    restart: unless-stopped
+    # v4.37: Security hardening (MongoDB official image auto-drops to mongodb uid 999)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-db
+    # Not on gw-net — database tier isolated from app services.
+
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.28
+    container_name: gw-elasticsearch
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    # Use: docker exec -it gw-elasticsearch curl ... for production access
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx768m"
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ES_PASSWORD:?ES_PASSWORD must be set in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:$$ELASTIC_PASSWORD http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    volumes:
+      - ./docker-data/es-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    # v4.37: Security hardening (ES official image auto-drops to elasticsearch uid 1000)
+    # no-new-privileges removed v4.38 — breaks ES chroot startup
+    security_opt: []
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - IPC_LOCK
+      - SYS_CHROOT
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1536M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-db
+    # Not on gw-net — database tier isolated from app services.
+
+  # ── APPLICATION TIER (gw-net: can reach frontend, can be reached by backend) ──
+
+  gw-firefly:
+    image: ipac/firefly:latest
+    container_name: gw-firefly
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    # Firefly is already proxied via nginx at /firefly/
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/firefly/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    # v4.37: Security hardening (Firefly already runs as tomcat user)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+
+
+  gw-backend:
+    build:
+      context: ./gw-backend
+      dockerfile: Dockerfile
+    # v4.DIVS: explicit image tag (was implicit from build context name).
+    image: alicpt-divs-gw-backend:latest
+    container_name: divs-backend
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    # Backend API is already proxied via nginx at /api/
+    ports:
+      - "8093:8093"
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATA_MONGODB_HOST: mongodb
+      SPRING_DATA_MONGODB_USERNAME: gw-app
+      SPRING_DATA_MONGODB_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD must be set}
+      # gw-app lives in the `admin` DB (see init_mongo.js), so authenticate there,
+      # not against the application DB (gravitationalwave).
+      SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE: admin
+      SPRING_ELASTICSEARCH_URIS: elasticsearch:9200
+      SPRING_ELASTICSEARCH_USERNAME: elastic
+      SPRING_ELASTICSEARCH_PASSWD: ${ES_PASSWORD:?ES_PASSWORD must be set in .env}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      JAVA_OPTS: "-Xms512m -Xmx1536m"
+    volumes:
+      - ./sample_data:/app/Ali_PW
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8093 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    # v4.37: Security hardening — non-root gwuser in Dockerfile
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+      - gw-db
+    # Backend is on both networks: gw-net (app tier) + gw-db (data tier)
+
+
+  gw-pipeline:
+    build:
+      context: ./gw-pipeline
+      dockerfile: Dockerfile
+      args:
+        # v4.27: Set to "true" to exclude GPL-3.0 Zoobot model for MIT-only distribution
+        EXCLUDE_GPL_MODELS: "${EXCLUDE_GPL_MODELS:-false}"
+    container_name: gw-pipeline
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    # Pipeline is already proxied via nginx at /pipeline/
+    ports:
+      - "8200:8200"
+    environment:
+      FITS_DATA_DIR: /app/data
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_PROXY_URL: http://host.docker.internal:8899/v1/chat/completions
+      THUMBNAIL_CACHE_DIR: /app/thumbnail_cache
+      GW_EXCLUDE_GPL_MODELS: "${EXCLUDE_GPL_MODELS:-false}"
+    volumes:
+      - ./sample_data/fitsfile:/app/data:ro
+      - ./docker-data/thumbnail_cache:/app/thumbnail_cache
+      - ./docker-data/models:/app/models:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8200/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      gw-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    # v4.37: Security hardening — non-root gwuser + read-only rootfs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+    # No gw-db — pipeline cannot directly access Mongo/ES
+
+
+  gw-mcp-server:
+    build:
+      context: ./gw-mcp-server
+      dockerfile: Dockerfile
+    container_name: gw-mcp-server
+    # DEV ONLY — remove in production via docker-compose.prod.yml
+    ports:
+      - "8100:8100"
+    environment:
+      BACKEND_URL: http://gw-backend:8093
+      PIPELINE_URL: http://gw-pipeline:8200
+      MOCK_MODE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/health')\" || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      gw-backend:
+        condition: service_healthy
+      gw-pipeline:
+        condition: service_started
+    restart: unless-stopped
+    # v4.37: Security hardening — non-root gwuser + read-only rootfs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+    # No gw-db — MCP server cannot directly access Mongo/ES
+
+  # ── FRONT-END TIER (gw-net only) ─────────────────────────────────────────
+
+  gw-frontend:
+    build:
+      context: ./gw-frontend
+      args:
+        APP_RUN_ENV: dev
+    container_name: gw-frontend
+    ports:
+      - "6001:80"
+      - "6002:443"
+    environment:
+      BACKEND_SERVICE_URL: http://gw-backend:8093
+      NGINX_CORS_DOMAIN: ${NGINX_CORS_DOMAIN:-}
+      NGINX_ENVSUBST_FILTER: BACKEND_SERVICE_URL NGINX_CORS_DOMAIN
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk https://localhost:443/ || curl -sf http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      gw-backend:
+        condition: service_healthy
+      gw-pipeline:
+        condition: service_started
+      gw-firefly:
+        condition: service_healthy
+    restart: unless-stopped
+    # v4.37: Security hardening — nginx user + read-only rootfs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:mode=1777
+      - /var/run:mode=1777
+      - /etc/nginx/conf.d:mode=1777
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+    # No gw-db — frontend cannot directly access Mongo/ES
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  NETWORKS — segmented by security tier (v4.15)
+# ═══════════════════════════════════════════════════════════════════════════
+networks:
+
+  gw-net:
+    driver: bridge
+    # Application tier: frontend, backend, pipeline, mcp, firefly
+    # These services CANNOT reach MongoDB or Elasticsearch directly.
+
+  gw-db:
+    driver: bridge
+    internal: false
+    # Data tier: mongodb, elasticsearch. Only backend is also on this network.
+    # Pipeline/MCP/Frontend/Firefly CANNOT reach databases directly.
