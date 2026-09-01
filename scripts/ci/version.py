@@ -56,10 +56,10 @@ def cmd_tag(args):
     if i > 0 and i + 1 < len(args):
         msg = args[i + 1]
 
-    # Tag must be on clean tree
-    status = git('status', '--porcelain')
+    # Tag must be on clean tree (only staged/modified counts; untracked is fine)
+    status = git('status', '--porcelain', '--untracked-files=no')
     if status.stdout.strip():
-        err('Working tree is dirty. Commit/stash first.')
+        err('Working tree has staged or modified files. Commit/stash first. Untracked files are OK.')
 
     r = git('tag', '-a', tag, '-m', msg)
     if r.returncode != 0:
