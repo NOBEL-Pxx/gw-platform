@@ -1,0 +1,63 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave Platform — Development Override (R6.25)
+# ═══════════════════════════════════════════════════════════════════════════
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# ⚠️  DEVELOPMENT ONLY — DO NOT use in production. Production uses:
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file EXPLICITLY DOCUMENTS the dev policy:
+#   - MongoDB auth: ON (env-injected passwords)  ← do NOT disable
+#   - ES xpack.security: ON                      ← do NOT disable
+#   - Host ports exposed: 27017, 9200, 8080, 8093, 8100, 8200  ← dev only
+#   - Demo seed data: ON (default)               ← prod sets SKIP_SEED_DATA=true
+#   - Rate limit: 120 req/min                    ← prod uses 30 req/min
+#
+# Why auth-ON in dev too (R6.25 reversal of v4.54):
+#   v4.54 had disabled MongoDB auth to fix cross-env inconsistency. That
+#   "fix" was a security regression — it left production MongoDB naked.
+#   R6.25 restored env-injected auth everywhere, including dev, so the
+#   same code path runs in both environments.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  mongodb:
+    # DEV: host port exposed for mongosh, mongo Compass, ad-hoc curl.
+    # PRODUCTION override removes this with `ports: []`.
+    # Auth: still ON — dev tools must authenticate via MONGO_APP_PASSWORD.
+    ports:
+      - "27017:27017"
+
+  elasticsearch:
+    # DEV: host port exposed for curl / Kibana / debugging.
+    # PRODUCTION override removes this with `ports: []`.
+    # xpack.security: still ON — auth required.
+    ports:
+      - "9200:9200"
+
+  gw-backend:
+    # DEV: direct access for backend testing (curl, Postman).
+    # In production, gw-frontend nginx proxies /api/ → gw-backend.
+    ports:
+      - "8093:8093"
+
+  gw-pipeline:
+    # DEV: direct access for pipeline testing.
+    ports:
+      - "8200:8200"
+
+  gw-mcp-server:
+    # DEV: direct MCP stdio/HTTP access.
+    ports:
+      - "8100:8100"
+
+  gw-firefly:
+    # DEV: direct access (proxied via nginx in prod).
+    ports:
+      - "8080:8080"
+
+  gw-frontend:
+    # Always exposed — the ONLY externally-accessible service in production.
+    ports:
+      - "6001:80"
+      - "6002:443"
