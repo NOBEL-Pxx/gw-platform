@@ -244,6 +244,10 @@ def register_routes_v450(app):
         pkcs7_b64 = ""
         timestamp_ms = int(_time.time() * 1000)
         timestamp_source = "local_clock"
+        # R6.52 #4 fix: initialize XMP packet vars BEFORE the cryptography try-block
+        # so that signature paths that skip cryptography still have defined values.
+        xmp_packet = ""
+        xmp_document_id = ""
         try:
             from cryptography.hazmat.primitives import hashes, serialization
             from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -294,8 +298,6 @@ def register_routes_v450(app):
             # R6.52 #4: Inject PDF/A-2b XMP metadata packet (dc:title, dc:creator,
             # pdf:Producer, xmpMM:DocumentID). Re-signs the modified content so
             # the signature covers the XMP block.
-            xmp_packet = ""
-            xmp_document_id = ""
             try:
                 import fitz as _fitz  # PyMuPDF
                 import uuid as _uuid
