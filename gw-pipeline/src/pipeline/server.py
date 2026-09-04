@@ -3997,6 +3997,39 @@ async def source_detection_params():
         },
     }
 
+def _apply_profile(profile: str) -> None:
+    """R6.53 #4: Apply dev/prod profile to app settings before uvicorn starts."""
+    if profile == "dev":
+        # Dev: permissive CORS, debug logging, open /docs
+        os.environ.setdefault("PIPELINE_DEV_MODE", "1")
+        os.environ.setdefault("PIPELINE_CORS_ALLOW_ORIGINS", "*")
+        os.environ.setdefault("PIPELINE_LOG_LEVEL", "DEBUG")
+        os.environ.setdefault("PIPELINE_DOCS_OPEN", "1")
+        os.environ.setdefault("PIPELINE_AUTH_REQUIRED", "0")
+        print("[profile] dev: CORS=*, DEBUG logs, /docs open, no auth required")
+    elif profile == "prod":
+        # Prod: strict CORS (configure via PIPELINE_CORS_ALLOW_ORIGINS), INFO logs,
+        # /docs closed, audit logging on
+        os.environ.setdefault("PIPELINE_DEV_MODE", "0")
+        os.environ.setdefault("PIPELINE_CORS_ALLOW_ORIGINS", "")
+        os.environ.setdefault("PIPELINE_LOG_LEVEL", "INFO")
+        os.environ.setdefault("PIPELINE_DOCS_OPEN", "0")
+        os.environ.setdefault("PIPELINE_AUTH_REQUIRED", "1")
+        print("[profile] prod: strict CORS, INFO logs, /docs closed, auth required")
+    else:
+        raise SystemExit(f"Unknown --profile={profile!r} (expected: dev|prod)")
+
+
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8200"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import argparse
+    parser = argparse.ArgumentParser(description="gw-pipeline FastAPI server")
+    parser.add_argument("--profile", choices=["dev", "prod"], default=os.getenv("PIPELINE_PROFILE", "dev"),
+                        help="Runtime profile (dev=permissive, prod=strict). Default: dev. "
+                             "Override via env PIPELINE_PROFILE=dev|prod.")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8200")))
+    args = parser.parse_args()
+
+    _apply_profile(args.profile)
+    print(f"[startup] gw-pipeline profile={args.profile} host={args.host} port={args.port}")
+    uvicorn.run(app, host=args.host, port=args.port)

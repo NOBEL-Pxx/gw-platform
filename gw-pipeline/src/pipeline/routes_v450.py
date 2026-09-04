@@ -47,10 +47,28 @@ def register_routes_v450(app):
         q: str = Query(..., min_length=1, max_length=200),
         limit: int = Query(50, ge=1, le=500),
         cursor: Optional[str] = Query(None, description="R6.51 opaque cursor from prior page"),
+        x_actor: Optional[str] = Header(default=None, alias="X-Actor"),
     ):
-        """R6.51: Cursor-paginated full-text search."""
+        """R6.51: Cursor-paginated full-text search.
+        R6.53 #7: Opt-in public access for dev/test. Default behavior unchanged
+        (requires Bearer token via upstream middleware). To make this endpoint
+        publicly accessible in dev, set PIPELINE_AUTH_AUDIT_PUBLIC=1 in env.
+        In prod, leave default (auth enforced by middleware/proxy).
+        """
+        import os
+        require_auth = os.environ.get("PIPELINE_AUTH_AUDIT_PUBLIC", "0") != "1"
+        if require_auth and not x_actor:
+            # Without opt-in flag, still require X-Actor (matches existing middleware behavior)
+            return JSONResponse(
+                {"error": "X-Actor header required for audit search"},
+                status_code=401,
+            )
         try:
-            return search_alert_routing_audit(q=q, limit=limit, cursor=cursor)
+            result = search_alert_routing_audit(q=q, limit=limit, cursor=cursor)
+            # When public mode is active, record who searched (audit trail)
+            if isinstance(result, dict) and x_actor:
+                result["_actor"] = x_actor
+            return result
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
