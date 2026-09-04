@@ -52,6 +52,15 @@ from .routes_v437 import register_routes
 from .routes_v438 import register_routes as register_routes_v438
 # v4.38: FITS upload + vision (Fix #5)
 from .fits_upload import register_upload_routes
+# R6.44: Observability routes (font error monitoring + A/B test dashboard)
+from .routes_v444 import register_routes as register_routes_v444
+# R6.46: AB history + alert endpoints
+from .routes_v446 import register_routes as register_routes_v446
+from .routes_v447 import register_routes as register_routes_v447
+# R6.49: Alert routing audit log endpoints
+from .routes_v449 import register_routes_v449
+from .routes_v449_hips import register_routes as register_routes_v449_hips
+from .routes_v450 import register_routes_v450
 
 class DLClassifyRequest(BaseModel):
     """Request body for DL model inference endpoints (v4.18)."""
@@ -79,6 +88,35 @@ app = FastAPI(
 app.add_middleware(RBACMiddleware)
 # v4.37: Register security + operations routes
 register_routes(app)
+# R6.44: Register observability routes (font errors + A/B dashboard)
+register_routes_v444(app)
+# R6.46: Register AB history + alert routes
+register_routes_v446(app)
+register_routes_v447(app)
+register_routes_v449(app)
+register_routes_v449_hips(app)
+# R6.50: Audit retention + full-text search + PDF signature verification
+register_routes_v450(app)
+
+# R6.27f: Register HiPS cutout proxy (with disk cache) — frontend uses this
+# instead of direct alasky.cds.unistra.fr access (which the cloudflared tunnel
+# browser can't reliably reach).
+try:
+    # R6.27f: ensure /app/src is on sys.path so `from pipeline.routes.hips`
+    # works regardless of uvicorn launch cwd (uvicorn may launch from /app).
+    # __file__ is /app/src/pipeline/server.py, so dirname(dirname(__file__)) is /app/src
+    import os as _os
+    import sys as _sys
+    _PIPELINE_SRC = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _PIPELINE_SRC not in _sys.path:
+        _sys.path.insert(0, _PIPELINE_SRC)
+    from pipeline.routes.hips import router as hips_router
+    app.include_router(hips_router, prefix="/pipeline", tags=["hips"])
+    import logging as _logging
+    _logging.getLogger("pipeline.startup").info("hips router loaded: %s", [r.path for r in hips_router.routes])
+except Exception as e:
+    import logging
+    logging.getLogger("pipeline.startup").warning(f"hips router not loaded: {e}")
 
 @app.on_event("startup")
 async def startup_init():
@@ -1316,37 +1354,51 @@ async def list_all_jobs(limit: int = Query(20, ge=1, le=100)):
 
 @app.get("/pipeline/merge-rgb")
 async def merge_rgb(
-    r_file: str = Query(..., description="Red channel FITS filename"),
-    g_file: str = Query(..., description="Green channel FITS filename"),
-    b_file: str = Query(..., description="Blue channel FITS filename"),
+    r_file: str = Query(None, description="Red channel FITS filename (fits mode)"),
+    g_file: str = Query(None, description="Green channel FITS filename (fits mode)"),
+    b_file: str = Query(None, description="Blue channel FITS filename (fits mode)"),
     size: int = Query(512, ge=64, le=2048, description="Output image size in pixels"),
     stretch: str = Query("percentile", description="Stretch method: percentile, asinh, log"),
     # R6.7b: per-channel stretch override (defaults to global `stretch`).
-    # Use for high-dynamic-range composites like allWISE (R=W4 has 10x
-    # background of W2/W1 — uniform percentile saturates R -> all-red).
     r_stretch: str = Query(None, description="Red channel stretch (overrides stretch)"),
     g_stretch: str = Query(None, description="Green channel stretch (overrides stretch)"),
     b_stretch: str = Query(None, description="Blue channel stretch (overrides stretch)"),
     # R6.7b2: per-channel percentile bounds + gamma correction.
-    # Use to rebalance channels with very different background levels
-    # (e.g., W4 vs W1 in allWISE).
     r_q_low: float = Query(None, description="Red channel lower percentile (overrides q_low)"),
     r_q_high: float = Query(None, description="Red channel upper percentile (overrides q_high)"),
     g_q_low: float = Query(None, description="Green channel lower percentile"),
     g_q_high: float = Query(None, description="Green channel upper percentile"),
     b_q_low: float = Query(None, description="Blue channel lower percentile"),
     b_q_high: float = Query(None, description="Blue channel upper percentile"),
-    r_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Red channel gamma correction (1=no change, >1 darkens)"),
+    r_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Red channel gamma correction"),
     g_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Green channel gamma"),
     b_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Blue channel gamma"),
     q_low: float = Query(1.0, ge=0.1, le=20.0, description="Lower percentile for stretch"),
     q_high: float = Query(99.0, ge=80.0, le=99.9, description="Upper percentile for stretch"),
     fmt: str = Query("png", description="Output format: png (raster) or pdf (vector, for publication)"),
+    # R6.28: HiPS mode for per-channel RGB cut. When mode='hips', frontend
+    # supplies 3 HiPS IDs (e.g. 'allWISE/W4', 'allWISE/W2', 'allWISE/W1') and
+    # ra/dec/size, backend fetches raw FITS per channel and applies the same
+    # per-channel cut/stretch pipeline. This is what makes RGB composites
+    # actually respond to per-channel contrast (DS9 standard behavior).
+    mode: str = Query("fits", description="'fits' (local FITS, R6.7b+) or 'hips' (raw FITS from CDS, R6.28+)"),
+    r_hips: str = Query(None, description="Red channel HiPS ID, e.g. 'allWISE/W4'"),
+    g_hips: str = Query(None, description="Green channel HiPS ID, e.g. 'allWISE/W2'"),
+    b_hips: str = Query(None, description="Blue channel HiPS ID, e.g. 'allWISE/W1'"),
+    ra: float = Query(None, description="RA in degrees (hips mode)"),
+    dec: float = Query(None, description="Dec in degrees (hips mode)"),
+    dither: bool = Query(True, description="R6.28: Floyd-Steinberg dither before 8-bit quantize (hips mode)"),
 ):
     """Merge three FITS files (R/G/B) into a single color image for Aladin/Firefly overlay.
 
     Each input FITS is independently stretched to [0,255] using the chosen method,
     then combined as R, G, B channels into a 24-bit PNG.
+
+    Modes (R6.28):
+      - fits (default): local FITS files (r_file/g_file/b_file). Used by
+        /pipeline/merge-rgb for stitched local FITS RGB.
+      - hips (R6.28): raw FITS fetched from CDS hips2fits?format=fits per
+        channel. Used by frontend Hi-Q mode for per-channel cut (DS9-style).
 
     Supports DSS2 (Blue/Green/Red), LEGACY (g/r/i or z), 2MASS (j/h/k), allWISE (W1/W2/W4).
 
@@ -1375,11 +1427,123 @@ async def merge_rgb(
     channel_q_low = {"R": r_q_low, "G": g_q_low, "B": b_q_low}
     channel_q_high = {"R": r_q_high, "G": g_q_high, "B": b_q_high}
     channel_gamma = {"R": r_gamma, "G": g_gamma, "B": b_gamma}
+
+    # R6.28: HiPS mode — fetch raw FITS from CDS hips2fits?format=fits per channel.
+    # Per-channel cut/stretch/dither is applied in float32 space, then composited
+    # as RGB PNG. This is the same pipeline as R6.27k's /pipeline/hips-float but
+    # composited across 3 channels.
+    if mode == "hips":
+        if not all([r_hips, g_hips, b_hips, ra is not None, dec is not None]):
+            raise HTTPException(400, "hips mode requires r_hips, g_hips, b_hips, ra, dec")
+        import io as _io
+        from astropy.io import fits as _fits
+        from PIL import Image as _PILImage
+        import httpx as _httpx
+
+        HIPS_CUTOUT_BASE_HIPS = "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
+        fov = 3 * (size / 400)
+
+        def _fetch_hips_fits(hips_id: str) -> np.ndarray:
+            url = f"{HIPS_CUTOUT_BASE_HIPS}?hips={hips_id}&ra={ra}&dec={dec}&fov={fov:.4f}&width={size}&height={size}&stretch=linear&format=fits"
+            with _httpx.Client(timeout=30, follow_redirects=True) as c:
+                r = c.get(url)
+                r.raise_for_status()
+            with _fits.open(_io.BytesIO(r.content)) as hdul:
+                data = hdul[0].data
+                if data is None:
+                    for hdu in hdul:
+                        if hdu.data is not None:
+                            data = hdu.data
+                            break
+                if data is None:
+                    raise HTTPException(502, f"No image HDU in {hips_id} FITS")
+            return np.asarray(data, dtype=np.float32)
+
+        def _process_channel(data: np.ndarray, ch_stretch: str, ch_q_low: float, ch_q_high: float, ch_gamma: float) -> np.ndarray:
+            data = np.flipud(data)  # FITS bottom-left → image top-left
+            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+            flat = data.ravel()
+            nonzero = flat[flat != 0]
+            if len(nonzero) > 0:
+                flat = nonzero
+            vmin = np.percentile(flat, ch_q_low) if ch_q_low is not None else np.percentile(flat, 1.0)
+            vmax = np.percentile(flat, ch_q_high) if ch_q_high is not None else np.percentile(flat, 99.0)
+            if vmax <= vmin:
+                vmax = vmin + 1
+            if ch_stretch == "asinh":
+                scale = (vmax - vmin) / 2.0
+                scaled = np.arcsinh((data - vmin) / scale) / np.arcsinh(1.0)
+                stretched = np.clip(scaled, 0, 1)
+            elif ch_stretch == "log":
+                scaled = np.clip((data - vmin) / (vmax - vmin), 1e-6, None)
+                stretched = np.log10(1 + 999 * scaled) / 3.0
+                stretched = np.clip(stretched, 0, 1)
+            elif ch_stretch == "sqrt":
+                stretched = np.sqrt(np.clip((data - vmin) / (vmax - vmin), 0, 1))
+            else:  # linear / percentile
+                stretched = np.clip((data - vmin) / (vmax - vmin), 0, 1)
+            if ch_gamma != 1.0:
+                stretched = np.power(stretched, ch_gamma)
+
+            # Floyd-Steinberg dither (1-LSB error diffusion)
+            if dither:
+                px = stretched * 255
+                h, w = px.shape
+                out = np.zeros_like(px, dtype=np.float32)
+                for y in range(h):
+                    for x in range(w):
+                        old = px[y, x]
+                        new = round(float(old))
+                        out[y, x] = new
+                        err = old - new
+                        if x + 1 < w:
+                            px[y, x + 1] += err * 7 / 16
+                        if y + 1 < h:
+                            if x > 0:
+                                px[y + 1, x - 1] += err * 3 / 16
+                            px[y + 1, x] += err * 5 / 16
+                            if x + 1 < w:
+                                px[y + 1, x + 1] += err * 1 / 16
+                return np.clip(out, 0, 255).astype(np.uint8)
+            return np.clip(stretched * 255, 0, 255).astype(np.uint8)
+
+        for label, hips_id in [("R", r_hips), ("G", g_hips), ("B", b_hips)]:
+            data = _fetch_hips_fits(hips_id)
+            ch_stretch = channel_stretches[label]
+            ch_q_low = channel_q_low[label] if channel_q_low[label] is not None else 1.0
+            ch_q_high = channel_q_high[label] if channel_q_high[label] is not None else 99.0
+            ch_gamma = channel_gamma[label]
+            ch = _process_channel(data, ch_stretch, ch_q_low, ch_q_high, ch_gamma)
+            img = _PILImage.fromarray(ch)
+            if img.size != (size, size):
+                img = img.resize((size, size), _PILImage.LANCZOS)
+            channels.append(np.array(img))
+            channel_labels.append(f"{label}={hips_id}")
+
+        rgb = np.stack(channels, axis=-1)
+        rgb_img = _PILImage.fromarray(rgb, mode='RGB')
+        buf = _io.BytesIO()
+        rgb_img.save(buf, format='PNG', optimize=True)
+        buf.seek(0)
+        out_data = buf.getvalue()
+        return Response(
+            content=out_data,
+            media_type='image/png',
+            headers={
+                'X-Merge-Mode': 'hips',
+                'X-Merge-Channels': ", ".join(channel_labels),
+                'X-Merge-Dither': 'true' if dither else 'false',
+                'Cache-Control': 'public, max-age=3600',
+            },
+        )
+
     for label, filename in [("R", r_file), ("G", g_file), ("B", b_file)]:
         ch_stretch = channel_stretches[label]
         ch_q_low = channel_q_low[label]
         ch_q_high = channel_q_high[label]
         ch_gamma = channel_gamma[label]
+        if filename is None:
+            raise HTTPException(400, f"{label} channel FITS filename required in fits mode (use mode=hips for CDS HiPS)")
         filepath = _safe_path(filename, check_fits=True)
         if not filepath.exists():
             raise HTTPException(404, f"{label} channel not found: {filename}")

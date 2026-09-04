@@ -31,7 +31,39 @@ jobs:
 
       - name: Build images
         if: github.event.inputs.stage == 'build' || github.event_name == 'push'
+        env:
+          # R6.47: inject git tag as VITE_APP_VERSION for Sentry release tracking.
+          # sentry.ts reads this via import.meta.env.VITE_APP_VERSION.
+          VITE_APP_VERSION: ${{ github.ref_name }}
         run: bash scripts/ci/deploy.sh build "${{ github.ref_name }}"
+
+      # R6.48: Upload Vite sourcemaps to Sentry (no-op if SENTRY_AUTH_TOKEN unset).
+      - name: Compare Sentry releases
+        if: env.SENTRY_AUTH_TOKEN != ''
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          PREV=$(git tag --sort=-creatordate | grep -E '^v4' | head -2 | tail -1 || echo "v4.0")
+          echo "Comparing $PREV to ${VITE_APP_VERSION}"
+          PR_ARG=""
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            PR_ARG="--post-pr-comment ${{ github.event.pull_request.number }}"
+          fi
+          bash scripts/sentry-compare-releases.sh "$PREV" "${VITE_APP_VERSION}" $PR_ARG || echo "compare-failed"
+      - name: Upload sourcemaps to Sentry
+        if: github.event.inputs.stage == 'build' || github.event_name == 'push'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ secrets.SENTRY_URL }}
+          VITE_APP_VERSION: ${{ github.ref_name }}
+          # R6.49: Sentry deploy env. Git tags (refs/tags/v*) -> production.
+          # Branches (refs/heads/*) -> staging. Other refs default to production.
+          SENTRY_ENV: ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }}
+        run: bash gw-frontend/scripts/upload-sentry-sourcemaps.sh
 
       - name: Run tests
         if: github.event.inputs.stage != 'rollback'
@@ -39,4 +71,6 @@ jobs:
 
       - name: Deploy
         if: github.event.inputs.stage == 'deploy' || github.event_name == 'push'
+        env:
+          VITE_APP_VERSION: ${{ github.ref_name }}
         run: bash scripts/ci/deploy.sh deploy "${{ github.ref_name }}" local

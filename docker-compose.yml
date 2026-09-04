@@ -291,6 +291,9 @@ services:
     environment:
       BACKEND_URL: http://gw-backend:8093
       PIPELINE_URL: http://gw-pipeline:8200
+      OBSERVABILITY_DIR: /tmp/observability
+      SIGNED_PDF_DIR: /tmp/observability/signed
+      HIPS_RESOLVE_CACHE_PATH: /tmp/observability/hips_resolve_cache.json
       MOCK_MODE: "false"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8100/health')\" || exit 1"]
@@ -391,6 +394,12 @@ services:
     networks:
       - gw-net
     # No gw-db — frontend cannot directly access Mongo/ES
+    # R6.27g.b: bind-mount build/ so vite rebuilds propagate without `docker compose build`
+    # (npm install inside container is blocked by dead Clash proxy at 7890).
+    # Image still has its baked-in build as fallback when host folder missing.
+    volumes:
+      - ./gw-frontend/build:/usr/share/nginx/html:ro
+      - ./gw-frontend/default.conf.template:/etc/nginx/templates/default.conf.template:ro
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  NETWORKS — segmented by security tier (v4.15)
