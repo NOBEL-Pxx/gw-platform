@@ -873,6 +873,9 @@ def search_alert_routing_audit(q: str, limit: int = 100, cursor: Optional[str] =
             "   OR after_json LIKE ? ESCAPE '\\' "
             "ORDER BY ts DESC, id DESC LIMIT ?"
         )
+        # R6.52 #1: Initialize params for the 5 LIKE placeholders (was missing,
+        # causing NameError when search was invoked with non-empty q).
+        params: List[Any] = [needle, needle, needle, needle, needle]
         # R6.51: cursor pagination — append (ts, id) filter + limit+1
         if cursor:
             decoded = _decode_cursor(cursor)
@@ -891,14 +894,33 @@ def search_alert_routing_audit(q: str, limit: int = 100, cursor: Optional[str] =
     if has_more:
         rows = rows[:capped_limit]
     out: List[Dict[str, Any]] = []
+    # R6.52 #1: case-insensitive highlight (match_field + match_offset)
+    q_lower = q.lower()
     for r in rows:
         d = dict(r)
+        match_field = None
+        match_offset = -1
+        for field in ('family', 'action', 'actor', 'before_json', 'after_json'):
+            val = d.get(field)
+            if val is None:
+                continue
+            if field in ('before_json', 'after_json') and isinstance(val, (dict, list)):
+                val = _json.dumps(val, ensure_ascii=False)
+            if not isinstance(val, str):
+                continue
+            idx = val.lower().find(q_lower)
+            if idx >= 0:
+                match_field = field
+                match_offset = idx
+                break
         for k in ('before_json', 'after_json'):
             if d.get(k):
                 try:
                     d[k] = _json.loads(d[k])
                 except Exception:
                     pass
+        d['match_field'] = match_field
+        d['match_offset'] = match_offset
         out.append(d)
     next_cursor = None
     if has_more and out:

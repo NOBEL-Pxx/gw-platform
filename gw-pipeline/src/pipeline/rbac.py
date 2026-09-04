@@ -68,7 +68,7 @@ _PUBLIC_PATHS = {
 }
 
 # Path prefixes that are public
-_PUBLIC_PREFIXES = ("/pipeline/jobs/", "/pipeline/thumbnail", "/pipeline/merge-rgb", "/pipeline/hips-thumb", "/pipeline/hips-stats", "/pipeline/hips-float", "/pipeline/hips-tile-resolve", "/pipeline/hips-cache-invalidate", "/pipeline/hips-cache-stats", "/pipeline/hips-cache-staleness", "/pipeline/pdf/verify-multiple", "/pipeline/pdf/sign-pkcs7", "/pipeline/docs", "/pipeline/redoc", "/pipeline/openapi.json", "/pipeline/observability/")  # R6.44: telemetry data is non-sensitive (font errors + A/B metrics)
+_PUBLIC_PREFIXES = ("/pipeline/jobs/", "/pipeline/thumbnail", "/pipeline/merge-rgb", "/pipeline/hips-thumb", "/pipeline/hips-stats", "/pipeline/hips-float", "/pipeline/hips-tile-resolve", "/pipeline/hips-cache-invalidate", "/pipeline/hips-cache-stats", "/pipeline/hips-cache-staleness", "/pipeline/pdf/verify-multiple", "/pipeline/pdf/sign-pkcs7", "/pipeline/pdf/watermark-exif", "/pipeline/docs", "/pipeline/redoc", "/pipeline/openapi.json", "/pipeline/observability/")  # R6.44: telemetry data is non-sensitive (font errors + A/B metrics)
 
 
 async def _verify_token(token: str) -> Optional[dict]:

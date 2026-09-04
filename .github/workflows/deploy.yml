@@ -44,6 +44,8 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          # R6.52 #2: Slack webhook fires in parallel with PR comment.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           PREV=$(git tag --sort=-creatordate | grep -E '^v4' | head -2 | tail -1 || echo "v4.0")
           echo "Comparing $PREV to ${VITE_APP_VERSION}"
@@ -51,7 +53,8 @@ jobs:
           if [ -n "${{ github.event.pull_request.number }}" ]; then
             PR_ARG="--post-pr-comment ${{ github.event.pull_request.number }}"
           fi
-          bash scripts/sentry-compare-releases.sh "$PREV" "${VITE_APP_VERSION}" $PR_ARG || echo "compare-failed"
+          # --post-slack-webhook reads $SLACK_WEBHOOK_URL from env (no-op if unset)
+          bash scripts/sentry-compare-releases.sh "$PREV" "${VITE_APP_VERSION}" $PR_ARG --post-slack-webhook || echo "compare-failed"
       - name: Upload sourcemaps to Sentry
         if: github.event.inputs.stage == 'build' || github.event_name == 'push'
         env:
