@@ -1,0 +1,60 @@
+{
+  "homepage": "https://aladin.u-strasbg.fr/",
+  "name": "aladin-lite",
+  "type": "module",
+  "version": "3.6.0-beta",
+  "description": "An astronomical HiPS visualizer in the browser",
+  "author": "Thomas Boch and Matthieu Baumann",
+  "license": "GPL-3",
+  "module": "./dist/aladin.js",
+  "main": "./dist/aladin.js",
+  "files": [
+    "dist/aladin.js"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/aladin.js",
+      "require": "./dist/aladin.umd.cjs"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cds-astro/aladin-lite"
+  },
+  "email": "cds-question@unistra.fr",
+  "keywords": [
+    "astronomy",
+    "visualization",
+    "rust",
+    "webgl",
+    "HiPS"
+  ],
+  "scripts": {
+    "wasm": "wasm-pack build ./src/core --target web --release --out-name core -- --features webgl2",
+    "wasm:dbg": "wasm-pack build --dev ./src/core --target web --out-name core -- --features=webgl2,dbg",
+    "predeploy": "npm run build && rm -rf aladin-lite*.tgz && npm pack",
+    "deploy": "python3 deploy/deploy.py",
+    "build": "npm run wasm && vite build",
+    "build:dbg": "npm run wasm:dbg && vite build",
+    "dev": "npm run build && vite",
+    "dev:dbg": "npm run build:dbg && vite",
+    "serve": "npm run dev",
+    "serve:dbg": "npm run dev:dbg",
+    "preview": "vite preview",
+    "test:build": "cd src/core && cargo test --release --features webgl2",
+    "test:playwright": "npx playwright test",
+    "test:update-snapshots": "npx playwright test --update-snapshots",
+    "doc": "jsdoc -c jsdoc.json src/js src/js/shapes src/js/libs/astro && cp aladin-logo.png docs/ && cp jsdoc-custom-style.css docs/ && cp jsdoc-make-responsive.js docs/",
+    "doc:dev": "npm run doc && open docs/index.html"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "docdash": "^2.0.2",
+    "jsdoc": "^4.0.2",
+    "vite": "^4.3.8",
+    "vite-plugin-glsl": "^1.1.2",
+    "vite-plugin-top-level-await": "^1.4.1",
+    "vite-plugin-wasm": "^3.2.2",
+    "vite-plugin-wasm-pack": "^0.1.12"
+  }
+}

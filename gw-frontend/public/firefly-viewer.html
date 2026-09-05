@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Firefly FITS Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0A0F24; overflow: hidden; font-family: monospace; }
+  #firefly-container { width: 100vw; height: 100vh; }
+  #firefly-status {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: #00F0FF; font: 13px/1.5 'JetBrains Mono', monospace;
+    z-index: 100; text-align: center; pointer-events: none;
+    text-shadow: 0 0 12px rgba(0,240,255,0.6);
+  }
+  #firefly-status.error { color: #FF006E; text-shadow: 0 0 12px rgba(255,0,110,0.6); }
+  #firefly-status.ok { display: none; }
+  .plot-wrapper { width: 100%; height: 100%; }
+  #firefly-spinner {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px; height: 32px; border: 2px solid rgba(0,240,255,0.2);
+    border-top-color: #00F0FF; border-radius: 50%;
+    animation: ff-spin 0.8s linear infinite; display: none; z-index: 99;
+  }
+  @keyframes ff-spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="firefly-container"></div>
+<div id="firefly-spinner"></div>
+<div id="firefly-status">Loading Firefly...</div>
+
+<script>
+var statusEl = document.getElementById('firefly-status');
+var spinnerEl = document.getElementById('firefly-spinner');
+function showStatus(msg, isError) {
+  if (statusEl) {
+    statusEl.textContent = msg;
+    statusEl.className = isError ? 'error' : '';
+  }
+  if (spinnerEl) spinnerEl.style.display = isError ? 'none' : 'block';
+}
+function hideStatus() {
+  if (statusEl) statusEl.className = 'ok';
+  if (spinnerEl) spinnerEl.style.display = 'none';
+}
+
+var params = new URLSearchParams(window.location.search);
+// R6.17b: read imgs (PNG thumbnails + survey tags) instead of fits (FITS URLs).
+// Each entry: <encoded-png-url>,<encoded-survey-tag>
+// e.g. /pipeline/thumbnail?filename=DSS2/...DSS2-Red.fits&size=400,DSS2-DSS2-Red
+var imgsParam = params.get('imgs') || params.get('fits');
+var colorTable = parseInt(params.get('color')) || 16;
+// v4.17: Default to Log stretch — avoids blocky quantization artifacts on 16-bit 2MASS
+var stretch = params.get('stretch') || 'Log';
+var showGrid = params.get('grid') !== '0';
+var minCut = parseFloat(params.get('minCut'));
+var maxCut = parseFloat(params.get('maxCut'));
+if (isNaN(minCut)) minCut = -1;
+if (isNaN(maxCut)) maxCut = 99.5;
+var fitsUrls = [];  // renamed internally but holds PNG URLs now
+var surveyTags = [];
+if (imgsParam) {
+  imgsParam.split(';').filter(Boolean).forEach(function(entry) {
+    var parts = entry.split(',');
+    if (parts[0]) {
+      fitsUrls.push(decodeURIComponent(parts[0]));
+      surveyTags.push(parts[1] ? decodeURIComponent(parts[1]) : '');
+    }
+  });
+}
+var DEBUG = params.get('debug') === '1';
+
+// v4.17: track state for postMessage updates
+var lastOpts = [];
+
+window.onFireflyLoaded = function(ff) {
+  if (DEBUG) console.log('[Firefly] onFireflyLoaded called');
+  window.firefly = ff;
+  if (!ff.options) ff.options = {};
+  if (!ff.options.hips) ff.options.hips = {};
+  ff.options.hips.readoutShowsPixel = true;
+};
+
+var scriptTag = document.createElement('script');
+scriptTag.type = 'text/javascript';
+scriptTag.src = '/firefly/firefly_loader.js';
+scriptTag.onerror = function() {
+  showStatus('Firefly loader.js FAILED to load', true);
+};
+document.head.appendChild(scriptTag);
+
+var initStart = Date.now();
+var maxWait = 30000;
+var checkInterval = setInterval(function() {
+  var ff = window.firefly;
+  if (ff && ff.initialized && typeof ff.showImage === 'function') {
+    clearInterval(checkInterval);
+    showStatus('Firefly ready, loading FITS...', false);
+    if (DEBUG) console.log('[Firefly] API ready in', Date.now() - initStart, 'ms');
+    loadFitsImages();
+  } else if (Date.now() - initStart > maxWait) {
+    clearInterval(checkInterval);
+    var hasInit = !!(ff && ff.initialized);
+    var hasShowImage = typeof (ff && ff.showImage);
+    showStatus('Firefly init TIMEOUT. initialized=' + hasInit + ' showImage=' + hasShowImage, true);
+  }
+}, 200);
+
+// Build RangeValues string for Firefly showImage
+function buildRangeValues(st, minC, maxC) {
+  // Both auto → let Firefly compute. Otherwise use valid 0-100 percentiles.
+  if (minC < 0 && maxC < 0) return null;
+  var lo = minC >= 0 ? minC : 0;
+  var hi = maxC >= 0 ? maxC : 100;
+  return st + ';' + lo + ';' + hi + ';Percent';
+}
+
+// Build showImage options for a single URL
+function buildPlotOpts(url, surveyTag, overrides) {
+  var st = (overrides && overrides.stretch) || stretch;
+  var ct = (overrides && overrides.colorTable !== undefined) ? overrides.colorTable : colorTable;
+  var g  = (overrides && overrides.showGrid !== undefined) ? overrides.showGrid : showGrid;
+  var mc = (overrides && overrides.minCut !== undefined) ? overrides.minCut : minCut;
+  var xc = (overrides && overrides.maxCut !== undefined) ? overrides.maxCut : maxCut;
+  var fname = url.split('/').pop() || '';
+  // R6.17b: detect 2MASS via surveyTag (e.g. '2MASS-2MASS-K') or legacy filename pattern
+  var is2 = /2mass|_j\.|_h\.|_k\./i.test(surveyTag || '') || /2mass|_j\.|_h\.|_k\./i.test(fname);
+  // v4.55: 2MASS → Asinh stretch + tighter percentile clip (0.5%-99.5%).
+  // Asinh smooths the faint-end quantization steps that make 2MASS look "blocky",
+  // while the clip removes the background noise floor and hot pixels.
+  var effSt = is2 ? 'Asinh' : st;
+  var rv = is2 ? ('Asinh;0.5;99.5;Percent') : buildRangeValues(st, mc, xc);
+  var opts = {
+    URL: url,
+    Title: fname || 'FITS',
+    ColorTable: ct,
+    StretchType: effSt,
+    ZoomType: 'TO_WIDTH',
+    GridOn: !!g
+  };
+  if (rv) { opts.InitialRangeValues = rv; opts.RangeValues = rv; }
+  return opts;
+}
+
+// Render all images into container
+function renderAll(overrides) {
+  var ff = window.firefly;
+  if (!ff || !ff.initialized || typeof ff.showImage !== 'function') return;
+  if (fitsUrls.length === 0) return;
+  var container = document.getElementById('firefly-container');
+  container.innerHTML = '';
+  lastOpts = [];
+  fitsUrls.forEach(function(item, i) {
+    var url = typeof item === 'string' ? item : item.pngUrl;
+    var surveyTag = typeof item === 'object' ? (item.surveyTag || '') : '';
+    try {
+      var plotDiv = document.createElement('div');
+      plotDiv.id = 'firefly-plot-' + i;
+      plotDiv.className = 'plot-wrapper';
+      plotDiv.style.cssText = 'width:100%;height:' + (100 / fitsUrls.length) + '%;';
+      container.appendChild(plotDiv);
+      var opts = buildPlotOpts(url, surveyTag, overrides);
+      lastOpts.push({ id: 'firefly-plot-' + i, url: url, surveyTag: surveyTag, opts: opts });
+      ff.showImage('firefly-plot-' + i, opts);
+    } catch (err) {
+      if (DEBUG) console.error('[Firefly] render error #' + i, err);
+    }
+  });
+}
+
+function loadFitsImages() {
+  renderAll();
+  hideStatus();
+  // v4.17: Notify parent that Firefly is ready for postMessage updates
+  setTimeout(function() {
+    window.parent.postMessage({ type: 'fireflyReady' }, '*');
+  }, 1000);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v4.17: postMessage API — update display params WITHOUT reloading iframe
+// This avoids the 10-30s Firefly JS re-init penalty on every param change.
+// ═══════════════════════════════════════════════════════════════════
+// R6.17: swap FITS URLs without iframe reload (millisecond response).
+// Parent prewarms all FITS files via fetch() on mount. When user clicks
+// a tile, the parent sends { type: 'swapFits', urls: [...] } and we re-
+// render with the new URLs. The iframe stays mounted (no Firefly JS re-
+// init, no WebGL context recreation). Browser cache serves the .fits
+// bytes in <10ms each.
+function handleSwapFits(payload) {
+  // R6.17b: payload is {imgs: [{pngUrl, surveyTag}, ...]} (preferred) or
+  // {urls: ['<pngUrl>', ...]} (back-compat). Normalize to array of items.
+  var items;
+  if (payload && Array.isArray(payload.imgs)) {
+    items = payload.imgs.filter(function(x){ return x && x.pngUrl; });
+  } else if (payload && Array.isArray(payload.urls)) {
+    items = payload.urls.filter(Boolean).map(function(u){ return {pngUrl: u, surveyTag: ''}; });
+  } else if (Array.isArray(payload)) {
+    items = payload.filter(Boolean);
+  } else {
+    items = [];
+  }
+  fitsUrls = items;
+  if (DEBUG) console.log('[Firefly] swapFits:', fitsUrls.length, 'imgs');
+  if (fitsUrls.length === 0) {
+    document.getElementById('firefly-container').innerHTML = '';
+    showStatus('Select observations to load FITS', false);
+    setTimeout(hideStatus, 1500);
+    return;
+  }
+  renderAll();
+}
+
+window.addEventListener('message', function(e) {
+  if (!e.data || typeof e.data.type !== 'string') return;
+  if (e.data.type === 'swapFits') {
+    if (DEBUG) console.log('[Firefly] swapFits postMessage');
+    handleSwapFits(e.data);
+    return;
+  }
+  if (e.data.type !== 'updateDisplay') return;
+  if (DEBUG) console.log('[Firefly] postMessage update:', e.data);
+
+  // Update global state
+  if (e.data.colorTable !== undefined) colorTable = e.data.colorTable;
+  if (e.data.stretch !== undefined) stretch = e.data.stretch;
+  if (e.data.showGrid !== undefined) showGrid = e.data.showGrid;
+  if (e.data.minCut !== undefined) minCut = e.data.minCut;
+  if (e.data.maxCut !== undefined) maxCut = e.data.maxCut;
+
+  var ff = window.firefly;
+  if (!ff || !ff.initialized || typeof ff.showImage !== 'function') {
+    if (DEBUG) console.log('[Firefly] API not ready, will apply on next render');
+    return;
+  }
+
+  // Re-render all existing plots with new display params
+  showStatus('Updating...', false);
+  lastOpts.forEach(function(item, i) {
+    try {
+      var opts = buildPlotOpts(item.url, item.surveyTag, null);
+      ff.showImage(item.id, opts);
+    } catch (err) {
+      if (DEBUG) console.error('[Firefly] update error #' + i, err);
+    }
+  });
+  setTimeout(hideStatus, 800);
+});
+</script>
+</body>
+</html>

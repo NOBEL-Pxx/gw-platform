@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave Platform — Nginx Config (v4.15)
+# Refactored: shared config in include files — zero duplication.
+# http-common.conf  → auto-included at http level (gzip, mime, sendfile)
+# server-common.conf → included per server block (keepalive, sub_filter)
+# locations-common.conf → included per server block (all location blocks)
+# security-headers.conf / csp-header.conf → included per server block
+# ═══════════════════════════════════════════════════════════════════════════
+
+# CORS origin validation
+map $http_origin $cors_origin {
+    default "";
+    "~^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$" "$http_origin";
+    "~^https?://.*$" "${NGINX_CORS_DOMAIN}";
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  HTTPS SERVER (port 443 → mapped to 6002)
+# ═══════════════════════════════════════════════════════════════════════════
+server {
+    listen       443 ssl http2;
+    server_name  localhost;
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    include /etc/nginx/shared/server-common.conf;
+    include /etc/nginx/includes/hsts.conf;
+    include /etc/nginx/includes/security-headers.conf;
+    include /etc/nginx/includes/csp-header.conf;
+    include /etc/nginx/shared/locations-common.conf;
+
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html { root /usr/share/nginx/html; }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  HTTP SERVER (port 80 → mapped to 6001)
+#  TLS handled externally by tunnel / reverse proxy. No HSTS.
+# ═══════════════════════════════════════════════════════════════════════════
+server {
+    listen       80;
+    server_name  localhost;
+
+    # R6.37: server-level HTTP -> HTTPS redirect.
+    # Lab VPN blocks fonts.googleapis.com for HTTP pages (caused R6.35b/R6.36).
+    # Always redirect to HTTPS 6002 which isn't filtered. $host preserves
+    # the user's hostname (e.g. 10.107.207.103).
+    return 301 https://$host:6002$request_uri;
+}

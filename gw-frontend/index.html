@@ -1,0 +1,178 @@
+<!-- GW v4.54 R6.5+rename — build 2026-08-30 -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- R6.47/R6.48: HiPS CDN preconnect.
+         Reduces ~150-300ms DNS+TLS handshake on first HiPS tile fetch.
+
+         R6.47 endpoints:
+         - alasky.cds.unistra.fr  : CDS HiPS+hips2fits (serves DSS2, 2MASS, NVSS, AllWISE, PS1, Gaia via CDS proxy)
+         - aladin.u-strasbg.fr    : Aladin Lite library
+
+         R6.48 additions:
+         - archives.esac.esa.int  : Gaia ESA archive (direct, bypassing CDS proxy)
+
+         2MASS and NVSS survey data is already covered via the alasky preconnect
+         (the codebase fetches all 7 surveys via CDS HiPS proxy, see bandOrder.ts).
+         Adding direct ESA archive preconnect for future Gaia cross-match features.
+
+         Per R6.27f, /pipeline/hips-thumb proxies when CDN is unreachable (cloudflared tunnel),
+         so direct users on LAN/VPN still benefit from preconnect.
+
+         Per CSP iron rule: script-src uses alasky.unistra.fr (no cds), but img-src/connect-src
+         legitimately use alasky.cds.unistra.fr for HiPS tiles. -->
+    <link rel="preconnect" href="https://alasky.cds.unistra.fr" crossorigin />
+    <link rel="dns-prefetch" href="https://alasky.cds.unistra.fr" />
+    <link rel="preconnect" href="https://aladin.u-strasbg.fr" crossorigin />
+    <link rel="dns-prefetch" href="https://aladin.u-strasbg.fr" />
+    <link rel="preconnect" href="https://archives.esac.esa.int" crossorigin />
+    <link rel="dns-prefetch" href="https://archives.esac.esa.int" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AliCPT DIVS Astronomical Data Platform" />
+    <title>AliCPT DIVS - Astronomical Data Platform</title>
+
+    <!-- R6.36: client-side HTTP -> HTTPS redirect.
+         Lab VPN blocks fonts.googleapis.com for HTTP pages (caused R6.35b).
+         This redirect forces users to HTTPS 6002 which isn't filtered.
+         If user is already on HTTPS or localhost, no redirect. -->
+    <script>
+      (function() {
+        try {
+          var u = new URL(window.location.href);
+          // Only redirect if: 1) HTTP, 2) port 6001, 3) not localhost
+          if (u.protocol === 'http:' && u.port === '6001' &&
+              !/^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
+            u.protocol = 'https:';
+            u.port = '6002';
+            window.location.replace(u.toString());
+          }
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+
+    <!-- R6.35b: removed Google Fonts external links.
+         Was render-blocking and the VPN blocks fonts.googleapis.com for HTTP
+         pages. Fonts are loaded locally via @font-face (see below). -->
+
+    <!-- v4.DIVS-perf: Firefly bundle (1.5MB) was eagerly prefetched here. Now lazy-loaded
+         via React.lazy() in MultiBandDataPanel — no prefetch needed. Firefly only loads
+         when user explicitly clicks the Firefly segmented option. -->
+
+    <!-- v4.DIVS-perf: Firefly bundle (1.5MB) was eagerly prefetched here. Now lazy-loaded
+         via React.lazy() in MultiBandDataPanel — no prefetch needed. Firefly only loads
+         when user explicitly clicks the Firefly segmented option. -->
+
+    <!-- v4.12: Fonts loaded locally via CSS @font-face — no external Google Fonts dependency.
+         JetBrains Mono and Inter are bundled in src/assets/fonts/ or fall back to system fonts. -->
+    <style>
+      /* R6.40: per-unicode-range font loading. Browser only downloads the
+         range it needs (most UI only needs Latin, no CJK until text appears).
+         Fallback chain: per-range woff2 -> full woff2 -> local() -> system. */
+      /* Inter Variable - Latin (most common) */
+      @font-face {
+        font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+        src: url('/fonts/inter-latin.woff2') format('woff2-variations'),
+             url('/fonts/inter-latin.woff2') format('woff2');
+        unicode-range: U+0020-007F, U+00A0-00FF;
+        font-display: swap;
+      }
+      /* Inter - CJK (only loaded when Chinese chars render) */
+      @font-face {
+        font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+        src: url('/fonts/inter-cjk.woff2') format('woff2-variations'),
+             url('/fonts/inter-cjk.woff2') format('woff2');
+        unicode-range: U+4E00-9FFF, U+3000-303F, U+FE30-FEFF, U+FF00-FFEF;
+        font-display: swap;
+      }
+      /* Inter - Other (symbols, fallback) */
+      @font-face {
+        font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+        src: url('/fonts/inter-other.woff2') format('woff2-variations'),
+             url('/fonts/inter-other.woff2') format('woff2');
+        unicode-range: U+0080-009F, U+0100-017F, U+0180-024F, U+0250-02AF, U+02B0-02FF, U+0300-036F, U+0370-03FF, U+0400-04FF, U+2000-209F, U+20A0-20CF, U+2100-214F, U+2150-218F, U+2190-21FF, U+2200-22FF, U+2300-23FF, U+2500-257F, U+2580-259F, U+25A0-25FF, U+2600-26FF, U+2700-27BF, U+2900-297F, U+2A00-2AFF, U+3000-303F, U+FE30-FEFF, U+FF00-FFEF;
+        font-display: swap;
+      }
+      /* R6.41: per-page font weight subset. Only 400 (regular) + 700 (bold) needed for UI. */
+/* Inter - Latin 400/700 weights only */
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 400 700;
+  src: url('/fonts/inter-weights.woff2') format('woff2-variations'),
+       url('/fonts/inter-weights.woff2') format('woff2');
+  unicode-range: U+0020-007F, U+00A0-00FF;
+  font-display: swap;
+}
+/* Inter - system fallback (no unicode-range = always matches) */
+      @font-face {
+        font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+        src: url('/fonts/inter-var.woff2') format('woff2'),
+             local('Inter'), local('Inter Variable'),
+             local('system-ui'), local('Arial'), local('sans-serif');
+        font-display: swap;
+      }
+      /* JetBrains Mono - Latin */
+      @font-face {
+        font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 700;
+        src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+        unicode-range: U+0020-007F, U+00A0-00FF;
+        font-display: swap;
+      }
+      /* JetBrains Mono - CJK */
+      @font-face {
+        font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 700;
+        src: url('/fonts/jetbrains-mono-cjk.woff2') format('woff2');
+        unicode-range: U+4E00-9FFF, U+3000-303F, U+FE30-FEFF, U+FF00-FFEF;
+        font-display: swap;
+      }
+      /* JetBrains Mono - system fallback */
+      @font-face {
+        font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400 700;
+        src: url('/fonts/jetbrains-mono-regular.woff2') format('woff2'),
+             local('JetBrains Mono'), local('JetBrainsMono'),
+             local('Menlo'), local('Monaco'), local('Consolas'), local('monospace');
+        font-display: swap;
+      }
+    </style>
+
+    <style>
+      #gw-splash{position:fixed;inset:0;z-index:9999;background:#0A0F1E;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif;transition:opacity .3s ease-out}
+      #gw-splash.hide{opacity:0;pointer-events:none}
+      #gw-splash .ring{width:48px;height:48px;border-radius:50%;border:2px solid rgba(0,240,255,.3);border-top-color:#00F0FF;animation:gw-spin .8s linear infinite;margin-bottom:20px}
+      @keyframes gw-spin{to{transform:rotate(360deg)}}
+      #gw-splash .label{color:rgba(255,255,255,.4);font-size:13px;font-weight:600;letter-spacing:.15em;font-family:monospace}
+    </style>
+  </head>
+  <body>
+    <div id="gw-splash"><div class="ring"></div><div class="label">AliCPT DIVS</div></div>
+    <div id="root"></div>
+
+
+    <!-- R6.40: prod font fallback. If woff2 fails to load (network, CDN), use system font. -->
+    <script>
+      (function() {
+        if (document.fonts && document.fonts.ready) {
+          var timeoutId = setTimeout(function() {
+            document.documentElement.classList.add('gw-font-fallback');
+          }, 3000);
+          document.fonts.ready.then(function() {
+            clearTimeout(timeoutId);
+            if (!document.fonts.check('1em Inter')) {
+              document.documentElement.classList.add('gw-font-fallback');
+              console.warn('[GW] woff2 font failed, using system font fallback');
+            }
+          });
+        }
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function(){var o=new MutationObserver(function(){var r=document.getElementById('root');if(r&&r.children.length>0){var s=document.getElementById('gw-splash');if(s){s.classList.add('hide');setTimeout(function(){s.remove()},400)}o.disconnect()}});o.observe(document.getElementById('root'),{childList:true,subtree:true})})();
+    </script>
+
+
+
+
+</body>
+</html>

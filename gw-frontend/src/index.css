@@ -1,0 +1,1448 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .flex-center {
+    @apply flex justify-center items-center;
+  }
+  .glass-card {
+    @apply rounded-2xl border border-glass-border bg-glass-white;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  .glass-card-hover {
+    @apply glass-card;
+    transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+  }
+  .glass-card-hover:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 8px 40px rgba(0, 240, 255, 0.06), 0 0 80px rgba(0, 240, 255, 0.03);
+  }
+  .aurora-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #00F0FF, #7C3AED, #FF006E);
+  }
+  .aurora-border {
+    position: relative;
+  }
+  .aurora-border::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0,240,255,0.3), rgba(124,58,237,0.3), rgba(255,0,110,0.3));
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask-composite: xor;
+    pointer-events: none;
+  }
+}
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 500;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.90);
+  background-color: #0A0F24;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Aurora nebula background animation */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(124, 58, 237, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 50% at 80% 80%, rgba(0, 240, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(255, 0, 110, 0.03) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+  /* Static — no animation to avoid compositing cost */
+}
+
+a {
+  font-weight: 600;
+  color: #00F0FF;
+  text-decoration: inherit;
+  transition: color 0.2s ease;
+}
+a:hover {
+  color: #7C3AED;
+}
+
+html, body, #root {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  min-height: 100vh;
+  /* Mobile browsers: use dvh (dynamic viewport height) for accurate sizing */
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  /* Prevent pull-to-refresh on mobile Chrome */
+  overscroll-behavior: none;
+  /* Prevent text size adjustment on orientation change */
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* v4.17: Bright scrollbars — clearly visible on dark background, !important to beat any override */
+::-webkit-scrollbar {
+  width: 12px !important;
+  height: 12px !important;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-radius: 6px !important;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.50) !important;
+  border-radius: 6px !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.75) !important;
+  background-clip: padding-box !important;
+}
+::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+/* Ant Design Table scroll containers */
+.ant-table-content::-webkit-scrollbar,
+.ant-table-body::-webkit-scrollbar {
+  width: 12px !important;
+  height: 12px !important;
+}
+.ant-table-content::-webkit-scrollbar-thumb,
+.ant-table-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.50) !important;
+  border-radius: 6px !important;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: auto !important;
+  scrollbar-color: rgba(0, 240, 255, 0.50) rgba(255, 255, 255, 0.08) !important;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 600;
+  font-family: inherit;
+  background-color: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: background-color 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+  color: rgba(255, 255, 255, 0.90);
+  /* Mobile: prevent double-tap zoom on buttons */
+  touch-action: manipulation;
+}
+button:hover {
+  border-color: rgba(0, 240, 255, 0.3);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #00F0FF;
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(0, 240, 255, 0.25);
+  color: #fff;
+}
+
+
+/* ═══════════════════════════════════════════════════════════ */
+/*  LANDING PAGE — text-shadow glow (GPU-friendly)            */
+/* ═══════════════════════════════════════════════════════════ */
+.landing-title {
+  /* will-change added on hover via .landing-entry-card:hover */
+}
+.landing-title-line1 {
+  text-shadow:
+    0 0 30px rgba(0,240,255,0.55),
+    0 0 60px rgba(124,58,237,0.45),
+    0 0 100px rgba(255,0,110,0.25),
+    0 0 180px rgba(0,240,255,0.18);
+}
+.landing-title-line2 {
+  text-shadow:
+    0 0 30px rgba(124,58,237,0.55),
+    0 0 60px rgba(0,240,255,0.45),
+    0 0 100px rgba(255,0,110,0.25),
+    0 0 180px rgba(124,58,237,0.18);
+}
+
+/* Keyframes for landing — defined once in CSS, not injected per render */
+@keyframes orbitFadeSpin {
+  0% { transform: translate(-50%, -50%) rotate(0deg); opacity: 0.25; }
+  50% { opacity: 0.75; }
+  100% { transform: translate(-50%, -50%) rotate(360deg); opacity: 0.25; }
+}
+@keyframes auroraFlow {
+  0%, 100% { background-position: 0% 0%; }
+  50% { background-position: 0% 100%; }
+}
+
+/* Landing card hover — icon-only default, text reveal on hover (v4.10) */
+.landing-entry-card {
+  /* Base styles moved from inline */
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 0;
+  /* Scroll animation initial state (v4.12) */
+  opacity: 0;
+  transform: translateY(40px);
+  /* Transitions: scroll animation + hover effects */
+  transition: opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              border-color 0.5s ease,
+              box-shadow 0.5s ease,
+              background 0.5s ease;
+}
+.landing-entry-card:hover {
+  border-color: var(--card-accent);
+  box-shadow: 0 0 60px rgba(0,240,255,0.12), 0 0 48px rgba(0,0,0,0.55);
+  background: rgba(255,255,255,0.06);
+  transform: translateY(-6px);
+  will-change: transform;
+  transition-delay: 0s !important;  /* Prevent nth-child stagger from leaking into hover */
+}
+/* Higher specificity to beat .landing-cards-visible > .landing-entry-card */
+.landing-cards-visible > .landing-entry-card:hover {
+  transform: translateY(-6px);
+  transition-delay: 0s !important;
+}
+.landing-entry-card:focus-visible {
+  outline: 2px solid var(--card-accent);
+  outline-offset: 2px;
+  border-color: var(--card-accent);
+  box-shadow: 0 0 60px rgba(0,240,255,0.12), 0 0 48px rgba(0,0,0,0.55);
+  transform: translateY(-6px);
+}
+
+/* Card icon layer — visible by default, fades + blurs on hover */
+.landing-card-icon {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), transform 500ms cubic-bezier(0.4, 0, 0.2, 1), filter 500ms ease;
+}
+.landing-entry-card:hover .landing-card-icon,
+.landing-entry-card:focus-visible .landing-card-icon {
+  opacity: 0.12;
+  transform: scale(1.1);
+  filter: blur(4px);
+  will-change: opacity, transform, filter;
+}
+
+/* Card text layer — hidden by default, slides up + fades in on hover */
+.landing-card-text {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.landing-entry-card:hover .landing-card-text,
+.landing-entry-card:focus-visible .landing-card-text {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Card accent glow bar — expands on hover */
+.landing-card-glow-bar {
+  width: 0;
+  transition: width 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.landing-entry-card:hover .landing-card-glow-bar,
+.landing-entry-card:focus-visible .landing-card-glow-bar {
+  width: 40%;
+}
+
+/* Card artistic text gradient */
+.landing-card-artistic-text {
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+
+/* ================================================================ */
+/*  AI FLOATING BUTTON                                               */
+/* ================================================================ */
+
+.ai-float-btn {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  width: 56px;
+  height: 56px;
+  padding: 0 !important;          /* Override global button padding */
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 240, 255, 0.30) !important;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(124, 58, 237, 0.12)) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow:
+    0 0 30px rgba(0, 240, 255, 0.15),
+    0 0 60px rgba(124, 58, 237, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.35s ease, box-shadow 0.35s ease, background 0.35s ease;
+  overflow: visible;
+}
+.ai-float-btn:active {
+  cursor: grabbing;
+}
+
+.ai-float-btn::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 240, 255, 0.12);
+  animation: aiPulseRing 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.ai-float-btn:hover {
+  will-change: transform;
+  transform: scale(1.12);
+  border-color: rgba(0, 240, 255, 0.55) !important;
+  box-shadow:
+    0 0 50px rgba(0, 240, 255, 0.25),
+    0 0 90px rgba(124, 58, 237, 0.15),
+    0 12px 40px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(124, 58, 237, 0.18)) !important;
+}
+
+.ai-float-btn:active {
+  transform: scale(0.95);
+  transition: transform 0.1s ease;
+}
+
+
+.ai-float-btn-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  -webkit-animation: aiSpinSlow 8s linear infinite;
+  animation: aiSpinSlow 8s linear infinite;
+  filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.5));
+  position: relative;
+  z-index: 1;
+  /* JPG transparency workaround: blend white bg into dark button */
+  mix-blend-mode: multiply;
+  /* Soft radial mask for smoother edge blending */
+  mask-image: radial-gradient(ellipse 60% 60% at center, black 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 60% at center, black 55%, transparent 100%);
+}
+
+/* Dual-prefixed keyframes for Safari < 15 compatibility */
+@-webkit-keyframes aiSpinSlow {
+  from { -webkit-transform: rotate(0deg); transform: rotate(0deg); }
+  to { -webkit-transform: rotate(360deg); transform: rotate(360deg); }
+}
+@keyframes aiSpinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@-webkit-keyframes aiPulseRing {
+  0%, 100% { opacity: 0.4; -webkit-transform: scale(1); transform: scale(1); }
+  50% { opacity: 1; -webkit-transform: scale(1.06); transform: scale(1.06); }
+}
+@keyframes aiPulseRing {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+/* Respect user motion preferences (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    animation-timing-function: step-end !important;
+  }
+  /* Disable continuous animations */
+  .ai-float-btn-icon {
+    animation: none !important;
+    filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.3));
+  }
+  /* Disable scanline CRT overlay */
+  [style*="repeating-linear-gradient"] {
+    background: transparent !important;
+  }
+  /* Stop all tailwind animations */
+  .animate-ping, .animate-pulse, .animate-spin, .animate-bounce {
+    animation: none !important;
+  }
+  /* Landing page cards */
+  .landing-entry-card, .landing-entry-card:hover,
+  .landing-cards-grid, .landing-cards-visible {
+    transition: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  /* GW animations */
+  .gw-ripple, .gw-bh, .gw-bh-orbit, .gw-chirp, .landing-title {
+    animation: none !important;
+  }
+}
+
+/* === Gravitational Wave landing page keyframes (moved from landing/index.tsx) === */
+@keyframes einsteinRotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+@keyframes gwRipple {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  25% { opacity: 0.7; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+@keyframes blackHoleOrbit {
+  0%, 100% { transform: translate(-50%, -50%) translateX(0) translateY(0); }
+  15% { transform: translate(-50%, -50%) translateX(12px) translateY(-6px); }
+  30% { transform: translate(-50%, -50%) translateX(8px) translateY(-2px); }
+  50% { transform: translate(-50%, -50%) translateX(-4px) translateY(8px); }
+  70% { transform: translate(-50%, -50%) translateX(-14px) translateY(4px); }
+  85% { transform: translate(-50%, -50%) translateX(-6px) translateY(-4px); }
+}
+@keyframes chirpPulse {
+  0%, 100% { opacity: 0.4; filter: drop-shadow(0 0 4px rgba(0,240,255,0.3)); }
+  25% { opacity: 0.7; filter: drop-shadow(0 0 8px rgba(124,58,237,0.5)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 12px rgba(0,240,255,0.8)) drop-shadow(0 0 20px rgba(124,58,237,0.5)); }
+  75% { opacity: 0.7; filter: drop-shadow(0 0 8px rgba(0,240,255,0.5)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gw-ripple, .gw-bh, .gw-bh-orbit, .gw-chirp { animation: none !important; }
+  .landing-title { animation: none !important; }
+}
+
+/* === v4.14: Landing page animations === */
+@keyframes landingFadeUp {
+  from { opacity: 0; transform: translateY(35px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Color-shifting gradient */
+@keyframes landingTitleFlow {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 0% 100%; }
+}
+
+/* Smooth orbital rotation for dual black holes */
+@keyframes blackHoleRotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+
+
+/* ================================================================ */
+/*  ANT DESIGN 5 - COMPLETE DARK THEME OVERRIDES                      */
+/* ================================================================ */
+
+/* --- Card --- */
+.ant-card {
+  contain: layout style;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 16px !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-card-head {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-card-head-title {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 700 !important;
+}
+
+/* --- Table --- */
+.ant-table {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255, 255, 255, 0.70) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  font-weight: 700 !important;
+}
+.ant-table-tbody > tr > td {
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.87) !important;
+  font-weight: 500 !important;
+}
+/* Row hover - much more visible */
+.ant-table-tbody > tr:hover > td {
+  background: rgba(0, 240, 255, 0.06) !important;
+}
+/* Row selected - CLEARLY visible */
+.ant-table-tbody > tr.ant-table-row-selected > td {
+  background: rgba(0, 240, 255, 0.10) !important;
+  border-color: rgba(0, 240, 255, 0.15) !important;
+}
+.ant-table-tbody > tr.ant-table-row-selected:hover > td {
+  background: rgba(0, 240, 255, 0.14) !important;
+}
+
+/* --- Radio (row selection) --- */
+.ant-radio-inner {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+.ant-radio-checked .ant-radio-inner {
+  background: #00F0FF !important;
+  border-color: #00F0FF !important;
+}
+.ant-radio-checked .ant-radio-inner::after {
+  background: #0A0A1A !important;
+}
+.ant-radio-wrapper {
+  color: rgba(255, 255, 255, 0.87) !important;
+}
+
+/* --- Pagination --- */
+/* v4.41: Fix pagination total text invisible on dark background */
+.ant-pagination-total-text {
+  color: rgba(255, 255, 255, 0.70) !important;
+  font-weight: 500 !important;
+}
+.ant-pagination-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+.ant-pagination-item a {
+  color: rgba(255, 255, 255, 0.70) !important;
+  font-weight: 600 !important;
+}
+.ant-pagination-item-active {
+  background: rgba(0, 240, 255, 0.18) !important;
+  border-color: rgba(0, 240, 255, 0.35) !important;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15) !important;
+}
+.ant-pagination-item-active a {
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-pagination-item:hover {
+  border-color: rgba(0, 240, 255, 0.25) !important;
+}
+.ant-pagination-item:hover a {
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-pagination-prev .ant-pagination-item-link,
+.ant-pagination-next .ant-pagination-item-link {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+/* --- Input --- */
+.ant-input, .ant-input-affix-wrapper {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-input::placeholder, .ant-input-affix-wrapper input::placeholder {
+  color: rgba(255, 255, 255, 0.35) !important;
+}
+.ant-input:focus, .ant-input-affix-wrapper:focus, .ant-input-affix-wrapper-focused {
+  border-color: rgba(0, 240, 255, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.12) !important;
+}
+.ant-input-password-icon {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-input-password-icon:hover {
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+/* --- Select --- */
+.ant-select-selector {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-select-selection-item {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-select-arrow {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-select-dropdown {
+  background: #0A0F24 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.ant-select-item {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+.ant-select-item-option-selected {
+  background: rgba(0, 240, 255, 0.12) !important;
+  color: #00F0FF !important;
+  font-weight: 600 !important;
+}
+.ant-select-item-option-active {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* --- Modal --- */
+.ant-modal-content {
+  background: #0A0F24 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+}
+.ant-modal-header {
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.ant-modal-title {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 700 !important;
+}
+.ant-modal-close {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-modal-close:hover {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+/* --- Tabs --- */
+.ant-tabs-tab {
+  color: rgba(255, 255, 255, 0.45) !important;
+  font-weight: 500 !important;
+}
+.ant-tabs-tab-active {
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-tabs-ink-bar {
+  background: linear-gradient(90deg, #00F0FF, #7C3AED) !important;
+  height: 2px !important;
+}
+.ant-tabs-nav::before {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* --- Segmented --- */
+.ant-segmented {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.ant-segmented-item {
+  color: rgba(255, 255, 255, 0.55) !important;
+  font-weight: 500 !important;
+}
+.ant-segmented-item-selected {
+  background: rgba(0, 240, 255, 0.18) !important;
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+/* --- Button --- */
+.ant-btn {
+  font-weight: 600 !important;
+}
+.ant-btn-primary {
+  background: linear-gradient(135deg, #7C3AED, #3B82F6) !important;
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3) !important;
+  font-weight: 700 !important;
+}
+.ant-btn-primary:hover {
+  background: linear-gradient(135deg, #8B5CF6, #60A5FA) !important;
+  box-shadow: 0 4px 22px rgba(124, 58, 237, 0.5) !important;
+}
+.ant-btn-default {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+.ant-btn-default:hover {
+  border-color: rgba(0, 240, 255, 0.30) !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* --- Switch (AI Chat toggle) --- */
+.ant-switch-checked {
+  background: #00F0FF !important;
+}
+.ant-switch-checked:hover:not(.ant-switch-disabled) {
+  background: #33F5FF !important;
+}
+/* --- Form --- */
+.ant-form-item-label > label {
+  color: rgba(255, 255, 255, 0.70) !important;
+  font-weight: 600 !important;
+}
+.ant-form-item-explain-error {
+  color: #FF006E !important;
+}
+
+/* --- Tag --- */
+.ant-tag {
+  font-weight: 600 !important;
+}
+
+/* --- Empty --- */
+.ant-empty-description {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+
+/* --- Spin --- */
+.ant-spin-dot-item {
+  background: #00F0FF !important;
+}
+
+/* --- Descriptions --- */
+.ant-descriptions-item-label {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.60) !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.ant-descriptions-item-content {
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* --- List --- */
+.ant-list-item {
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+.ant-list-item-meta-title {
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-weight: 600 !important;
+}
+.ant-list-item-meta-description {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+/* --- Splitter --- */
+.ant-splitter-bar {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+.ant-splitter-bar:hover {
+  background: rgba(0, 240, 255, 0.15) !important;
+}
+
+/* --- Tooltip --- */
+.ant-tooltip-inner {
+  background: rgba(10, 15, 36, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.87) !important;
+}
+
+/* --- InputNumber --- */
+.ant-input-number {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+.ant-input-number-input {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-input-number-handler {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+.ant-input-number-handler span {
+  color: rgba(255, 255, 255, 0.50) !important;
+}
+
+/* --- Divider --- */
+.ant-divider {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* === Landing Cards Scroll Animation (v4.12) === */
+.landing-cards-grid {
+  opacity: 0;
+  transform: translateY(60px);
+  transition: opacity 0.8s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.landing-cards-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.landing-cards-visible > .landing-entry-card:nth-child(1) { transition-delay: 0ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(2) { transition-delay: 100ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(3) { transition-delay: 200ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(4) { transition-delay: 300ms; }
+
+.landing-cards-visible > .landing-entry-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Icon edge blur — soft radial mask blends edges into dark background */
+.landing-card-icon img {
+  mask-image: radial-gradient(ellipse 65% 65% at center, black 50%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 65% 65% at center, black 50%, transparent 100%);
+}
+
+.landing-entry-card:hover .landing-card-icon img {
+  transform: scale(1.08);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+
+/* v4.17: Firefly cut slider — dark theme visibility */
+.cut-slider .ant-slider-rail { background-color: rgba(255,255,255,0.10) !important; }
+.cut-slider .ant-slider-track { background-color: rgba(0,240,255,0.5) !important; }
+.cut-slider:hover .ant-slider-track { background-color: rgba(0,240,255,0.7) !important; }
+.cut-slider .ant-slider-handle::after { box-shadow: 0 0 0 2px rgba(0,240,255,0.5) !important; }
+.cut-slider .ant-slider-handle:hover::after { box-shadow: 0 0 0 3px rgba(0,240,255,0.7) !important; }
+.cut-input .ant-input-number-input { color: rgba(255,255,255,0.8) !important; background: transparent !important; }
+
+
+
+/* All immediate children of a Splitter panel must fill available height */
+.ant-splitter-panel > :first-child {
+  height: 100%;
+}
+
+/* Ensure Ant Design Tables inside panels have proper scroll */
+.ant-splitter-panel .ant-table-wrapper,
+.ant-splitter-panel .ant-table-container {
+  height: 100%;
+}
+
+.ant-splitter-panel .ant-spin-container {
+  height: calc(100% - 56px);  /* minus pagination bar */
+}
+
+
+
+/* ================================================================ */
+/*  v4.36: AI Code Block Formatting (used by sanitize.ts)            */
+/* ================================================================ */
+.ai-code-block {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 11.5px;
+  color: #C9D1D9;
+  line-height: 1.5;
+}
+.ai-inline-code {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+  color: #FFB347;
+}
+
+/* v4.36: High contrast mode support (WCAG 2.3.2) */
+@media (prefers-contrast: high) {
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 240, 255, 0.75) !important;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.15) !important;
+  }
+  * {
+    border-color: rgba(255, 255, 255, 0.2) !important;
+  }
+}
+
+/* v4.36: Focus indicator enhancements (WCAG 2.4.7) */
+*:focus-visible {
+  outline: 2px solid #00F0FF !important;
+  outline-offset: 2px !important;
+}
+.ant-btn:focus-visible,
+.ant-input:focus-visible,
+.ant-select-focused .ant-select-selector {
+  outline: 2px solid #00F0FF !important;
+  outline-offset: 1px !important;
+}
+
+
+/* ================================================================ */
+
+/* ================================================================ */
+/*  v4.39: MOBILE RESPONSIVE — comprehensive rewrite               */
+/* ================================================================ */
+
+/* ── Base mobile fixes ────────────────────────────────────────── */
+
+/* Allow body scroll on mobile (SPA panels scroll internally but nav needs scroll) */
+@media (max-width: 768px) {
+  html, body, #root {
+    overflow: auto !important;
+  }
+
+  /* ── Navigation: dark-themed dropdown Select on mobile ── */
+  /* (Desktop nav handled by Tailwind hidden md:flex; mobile Select by flex md:hidden) */
+  .mobile-nav-select .ant-select-selection-item {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: rgba(255,255,255,0.85) !important;
+    line-height: 36px !important;
+  }
+  .mobile-nav-select .ant-select-selection {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    border-radius: 8px !important;
+    min-height: 34px !important;
+  }
+  .mobile-nav-select .ant-select-arrow {
+    color: rgba(255,255,255,0.40) !important;
+  }
+  .h-16 .text-lg { font-size: 13px !important; }
+  .h-16 .text-xs.text-white\/40 { display: none !important; }
+
+  /* Hide starfield controls on mobile (free up header space for nav dropdown) */
+  .h-16 .ml-auto.mr-2 { display: none !important; }
+
+  /* ── Header compact ── */
+  .h-16 {
+    height: 44px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    gap: 6px !important;
+  }
+  .h-16 > a.flex-shrink-0 { flex-shrink: 0; }
+
+  /* ── Floating AI button: smaller, no animation glitch ── */
+  .ai-float-btn {
+    width: 42px !important;
+    height: 42px !important;
+    bottom: 14px !important;
+    right: 14px !important;
+    transform: none !important; /* kill hover scale */
+  }
+  .ai-float-btn::before { display: none; }  /* kill pulse ring on mobile */
+  .ai-float-btn:hover { transform: none !important; }
+  .ai-float-btn:active { transform: scale(0.92) !important; }
+
+  /* ── Landing page: kill ALL heavy animations ── */
+  .landing-title-line1,
+  .landing-title-line2 {
+    text-shadow: 0 0 20px rgba(0,240,255,0.3), 0 0 40px rgba(124,58,237,0.2) !important;
+    animation: landingFadeUp 0.6s ease !important;  /* only fade-in, no infinite flow */
+    font-size: clamp(1.5rem, 8vw, 3rem) !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    /* Keep gradient but freeze the animation */
+    background-size: 100% 100% !important;
+  }
+  /* Kill infinite animations on mobile to prevent flicker */
+  .landing-title {
+    animation: landingFadeUp 0.6s ease !important;
+  }
+  [class*="gw-ripple"],
+  [class*="gw-bh"],
+  [class*="gw-chirp"] {
+    animation: none !important;
+  }
+  /* ── Landing page: single viewport, no scroll ── */
+  /* Constrain landing page to exactly one viewport */
+  .relative.min-h-screen.flex.flex-col.items-center.justify-center {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    overflow: hidden !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+  /* Hero section: compact on mobile */
+  .relative.z-10.text-center.mb-14 {
+    margin-bottom: 8px !important;
+    margin-top: 0 !important;
+  }
+  /* Hero container: reduce from 94vw to compact size */
+  .relative.z-10.text-center.mb-14 > div[style*="width"] {
+    width: 240px !important;
+    height: 240px !important;
+    max-width: 60vw !important;
+    max-height: 60vw !important;
+    margin-bottom: 0 !important;
+  }
+  /* Title: compact size */
+  .landing-title {
+    font-size: 38px !important;
+    line-height: 0.95 !important;
+    animation: landingFadeUp 0.5s ease !important;
+  }
+  /* Separator and decorative lines: tighter spacing */
+  .relative.z-10.text-center.mb-14 .my-5 { margin-top: 6px !important; margin-bottom: 6px !important; }
+  .relative.z-10.text-center.mb-14 .mt-1 { margin-top: 2px !important; }
+  .relative.z-10.text-center.mb-14 .mt-2 { margin-top: 2px !important; }
+  .relative.z-10.text-center.mb-14 .mb-4 { margin-bottom: 2px !important; }
+  .relative.z-10.text-center.mb-14 .w-24 { width: 48px !important; }
+  .relative.z-10.text-center.mb-14 .w-32 { width: 64px !important; }
+  .relative.z-10.text-center.mb-14 .w-48 { width: 80px !important; }
+  /* Entry cards: compact 2x2 grid */
+    /* landing cards: 2x2 grid, compact cards */
+  .landing-cards-grid,
+  [class*="grid-cols"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 6px !important;
+    padding: 0 4px !important;
+  }
+  /* Smaller card images on mobile */
+  .landing-entry-card .h-44 { height: 84px !important; }
+  .landing-entry-card .landing-card-artistic-text { font-size: 11px !important; }
+  .landing-entry-card .landing-card-glow-bar { width: 24px !important; margin-top: 3px !important; }
+  /* Hide image fit toggle button on mobile */
+  button[class*="fixed"][class*="bottom-4"][class*="left-4"] { display: none !important; }
+  .landing-entry-card {
+    min-height: auto !important;
+    padding: 14px !important;
+  }
+  .landing-entry-card:hover { transform: none !important; }
+  /* Kill Einstein rings and orbit elements on mobile (too large) */
+  [style*="einsteinRotate"],
+  .gw-bh-orbit,
+  .gw-bh,
+  div[style*="width: 500px"][style*="height: 500px"],
+  div[style*="width: 520px"][style*="height: 520px"],
+  div[style*="width: 540px"][style*="height: 540px"],
+  div[style*="width: 550px"][style*="height: 550px"] {
+    display: none !important;
+  }
+
+  /* ── Assistant page (AI Chat): editor layout ── */
+  /* Hide gutter line numbers */
+  .w-14.flex-shrink-0.overflow-hidden.select-none { display: none !important; }
+  /* Shrink message padding */
+  .flex-1.py-4.px-5 { padding: 6px 8px !important; }
+  /* Toolbar: compact horizontal scroll (hidden scrollbar) */
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center {
+    padding: 4px 6px !important;
+    gap: 2px !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center::-webkit-scrollbar {
+    display: none;
+  }
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > button {
+    font-size: 9px !important;
+    padding: 2px 5px !important;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  /* Hide the spacer flex div and msgs count to save space */
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > .flex-1,
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > span:last-child {
+    display: none !important;
+  }
+  /* Breadcrumb: hide */
+  div.flex.items-center.px-4.py-1.flex-shrink-0.text-xs.gap-1.select-none {
+    display: none !important;
+  }
+  /* Editor tabs bar: strict single row, exactly like desktop */
+  /* Force header bar never wrap, scroll if needed */
+  div[data-ai-header="true"].flex.items-center.flex-shrink-0.select-none {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    height: 32px !important;
+  }
+  div[data-ai-header="true"].flex.items-center.flex-shrink-0.select-none::-webkit-scrollbar { display: none; }
+  /* Tabs: hide inactive */
+  div.flex.items-center.px-4.h-full.gap-2 { font-size: 9px !important; padding: 0 4px !important; flex-shrink: 0; white-space: nowrap; }
+  div.flex.items-center.px-4.h-full.gap-2:not(:first-child) { display: none !important; }
+  /* Right control group: NEVER wrap */
+  div[data-ai-header="true"] > div.flex.items-center.gap-3.px-4 {
+    flex-wrap: nowrap !important;
+    overflow: hidden;
+    padding: 0 4px !important;
+    gap: 3px !important;
+  }
+  div[data-ai-header="true"] > div.flex.items-center.gap-3.px-4 > * {
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+  }
+  /* Hide saved indicator */
+  div[data-ai-header="true"] span[style*="opacity"] { display: none !important; }
+  /* Compact controls */
+  div[data-ai-header="true"] span[class*="font-semibold"] { font-size: 9px !important; flex-shrink: 0; white-space: nowrap !important; }
+  div[data-ai-header="true"] .ant-tag { font-size: 8px !important; padding: 0 2px !important; margin: 0 !important; line-height: 15px !important; flex-shrink: 0; }
+  div[data-ai-header="true"] button { font-size: 8px !important; flex-shrink: 0; white-space: nowrap !important; }
+  /* Hide quota text */
+  div[data-ai-header="true"] > div.flex.items-center.gap-3.px-4 > span:last-of-type { display: none !important; }
+  /* Switch: clean native small toggle, no size override */
+  div[data-ai-header="true"] .ant-switch { flex-shrink: 0; min-width: 28px; }
+  /* Status bar: compact, horizontally scrollable (hidden scrollbar) */
+  div.flex.items-center.px-3.py-0\.5.flex-shrink-0.text-xs.gap-3.select-none {
+    font-size: 9px !important;
+    gap: 4px !important;
+    padding: 0 4px !important;
+    height: 18px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  div.flex.items-center.px-3.py-0\.5.flex-shrink-0.text-xs.gap-3.select-none::-webkit-scrollbar {
+    display: none;
+  }
+  /* Hide non-essential status bar items: Terminal label only */
+  div.flex.items-center.px-3.py-0\.5.flex-shrink-0.text-xs.gap-3.select-none > span:nth-child(2) {
+    display: none !important;
+  }
+  /* Terminal input area — single row, no wrap */
+  div.flex.items-center.gap-2.px-4.py-2 {
+    padding: 6px 8px !important;
+    gap: 4px !important;
+    flex-wrap: nowrap !important;
+  }
+  div.flex.items-center.gap-2.px-4.py-2 input {
+    font-size: 12px !important;
+  }
+  /* Login prompt: keep error text + button on one row */
+  div.flex.items-center.gap-2.px-4.py-2 .flex-1.flex.items-center.gap-3 {
+    flex-wrap: nowrap !important;
+  }
+  div.flex.items-center.gap-2.px-4.py-2 .flex-1.flex.items-center.gap-3 span {
+    font-size: 10px !important;
+    white-space: nowrap !important;
+  }
+  div.flex.items-center.gap-2.px-4.py-2 .flex-1.flex.items-center.gap-3 .ant-btn {
+    flex-shrink: 0;
+    font-size: 10px !important;
+    padding: 2px 8px !important;
+    height: auto !important;
+    white-space: nowrap !important;
+  }
+  .flex.items-center.px-4.py-1.text-xs.gap-2 { padding: 2px 6px !important; }
+  /* Stream cursor blink - reduce on mobile */
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ── Text overflow containment ── */
+  /* Prevent long strings/code from breaking mobile layout */
+  p, span, div, h1, h2, h3, h4, h5, h6, li, td, th, label, a {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+  pre, code, .ant-typography code {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    max-width: 100%;
+    overflow-x: auto !important;
+  }
+  .ant-card-body { overflow: hidden; }
+  .ant-card-body p, .ant-card-body span, .ant-card-body div {
+    max-width: 100%;
+  }
+  /* Table cell: allow shrinking but don't force max-width:0 (breaks layout) */
+  .ant-table-cell {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* For fixed-layout tables, allow cells to shrink to 0 for text-overflow */
+  .ant-table-fixed .ant-table-cell,
+  .ant-table-wrapper .ant-table.ant-table-fixed .ant-table-cell {
+    max-width: none;
+  }
+  /* Flex children min-width zero to prevent overflow */
+  .flex-1.overflow-auto, .flex-1[class*="overflow"] {
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* ── Ant Design overrides ── */
+  .ant-drawer-content-wrapper { max-width: 100vw !important; }
+  .ant-modal { max-width: 96vw !important; margin: 4px !important; }
+  .ant-card { border-radius: 10px !important; }
+  .ant-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ant-table { font-size: 11px !important; }
+  .ant-table-thead > tr > th { padding: 6px 8px !important; font-size: 10px !important; }
+  .ant-table-tbody > tr > td { padding: 6px 8px !important; font-size: 11px !important; }
+  .ant-splitter-panel { min-width: 0 !important; }
+  .ant-btn { font-size: 12px !important; padding: 4px 10px !important; height: auto !important; }
+  .ant-tag { font-size: 10px !important; padding: 0 4px !important; }
+  .ant-form-item { margin-bottom: 10px !important; }
+  .ant-descriptions-item-label,
+  .ant-descriptions-item-content { padding: 6px 8px !important; font-size: 11px !important; }
+  .ant-select-selector { font-size: 12px !important; }
+  .ant-pagination-item { min-width: 28px !important; height: 28px !important; font-size: 11px !important; }
+  .ant-pagination-total-text { color: rgba(255,255,255,0.65) !important; font-size: 11px !important; }
+
+
+
+  /* v4.52: Portal-based fullscreen — renders to document.body, escapes nav bar stacking context */
+  .fits-fullscreen-viewer {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483647 !important;
+    background: #000 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .fits-fullscreen-body {
+    flex: 1;
+    min-height: 0;
+  }
+  /* v4.52: Touch zone at top-right — above everything */
+  .fits-fullscreen-viewer .fits-fullscreen-zone {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: rgba(0,0,0,0.50);
+    border: 1px solid rgba(255,255,255,0.20);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fits-fullscreen-viewer .fits-fullscreen-zone:active {
+    background: rgba(255,255,255,0.15);
+  }
+  .fits-fullscreen-viewer .fits-fullscreen-icon {
+    font-size: 16px;
+    color: rgba(255,255,255,0.70);
+    line-height: 1;
+  }
+  /* Non-fullscreen touch zone: subtle, top-right of viewer */
+  .fits-fullscreen-zone {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 100;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: rgba(0,0,0,0.30);
+    border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fits-fullscreen-zone:active { background: rgba(255,255,255,0.10); }
+  .fits-fullscreen-icon {
+    font-size: 15px;
+    color: rgba(255,255,255,0.45);
+    line-height: 1;
+  }
+  
+  /* v4.53: Thumbnail square guard — prevents stretching on mobile */
+  .gw-thumb-square {
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+  }
+
+
+  /* ── Splitter: stack vertically on mobile ── */
+  .ant-splitter { flex-direction: column !important; }
+  .ant-splitter-panel { flex: none !important; min-height: 200px !important; max-height: 60vh !important; }
+  .ant-splitter-bar { width: 100% !important; height: 6px !important; }
+
+  /* ── General: smaller headings, readable text ── */
+  h1 { font-size: 1.3rem !important; }
+  h2 { font-size: 1.1rem !important; }
+  h3 { font-size: 1rem !important; }
+  p, span, div { /* inherit */ }
+
+}
+
+/* ── Select dropdown popup: dark Aurora theme (global — popup renders at body level) ── */
+@media (max-width: 768px) {
+  .ant-select-dropdown {
+    background: rgba(15,15,35,0.97) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0,240,255,0.10) !important;
+    border-radius: 10px !important;
+  }
+  .ant-select-item-option {
+    color: rgba(255,255,255,0.75) !important;
+    font-weight: 500 !important;
+    font-size: 13px !important;
+    padding: 8px 12px !important;
+  }
+  .ant-select-item-option-selected {
+    background: rgba(0,240,255,0.10) !important;
+    color: #00F0FF !important;
+    font-weight: 700 !important;
+  }
+  .ant-select-item-option-active {
+    background: rgba(255,255,255,0.05) !important;
+  }
+}
+
+/* ── Small phone (< 480px) ────────────────────────────────────── */
+@media (max-width: 480px) {
+  .ai-float-btn {
+    width: 36px !important;
+    height: 36px !important;
+    bottom: 10px !important;
+    right: 10px !important;
+  }
+
+  /* Mobile nav dropdown: smaller on tiny screens */
+  .mobile-nav-select .ant-select-selection-item { font-size: 11px !important; }
+  .mobile-nav-select .ant-select-selection { min-height: 30px !important; }
+
+  /* Toolbar: allow horizontal scroll on tiny screens (hidden scrollbar) */
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 4px 6px !important;
+    gap: 3px !important;
+  }
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center::-webkit-scrollbar {
+    display: none;
+  }
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > button {
+    font-size: 9px !important;
+    padding: 2px 5px !important;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  /* Hide the spacer flex div to save space, hide msgs count */
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > .flex-1,
+  div.flex.gap-1\.5.px-4.py-1\.5.flex-shrink-0.flex-wrap.items-center > span:last-child {
+    display: none !important;
+  }
+
+  /* Starfield: reduce particles handled by JS tier detection */
+}
+
+/* ── Landscape phone ──────────────────────────────────────────── */
+@media (max-height: 500px) and (orientation: landscape) {
+  .h-16 { height: 36px !important; }
+  .ai-float-btn {
+    width: 32px !important;
+    height: 32px !important;
+    bottom: 6px !important;
+    right: 6px !important;
+  }
+}
+
+/* ── Keyframe: blink cursor for streaming ────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+
+/* ── Mobile viewport fix: dvh-aware height ── */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}
+
+/* ── Touch-friendly: larger tap targets on mobile ── */
+@media (max-width: 768px) {
+  button, a, .ant-btn, [role="button"], input, select, textarea {
+    min-height: 36px;
+    min-width: 36px;
+  }
+  /* But allow small buttons to stay small */
+  button.text-xs, .ant-btn-sm {
+    min-height: 28px;
+    min-width: 28px;
+  }
+}
+
+/* ===== R6.27g: MultiBandDataPanel DS9-style manual contrast slider ===== */
+.mbp-thumb-contrast:hover .mbp-thumb-slider {
+  opacity: 1 !important;
+}
+.mbp-thumb-contrast .mbp-thumb-slider:hover {
+  opacity: 1 !important;
+}
+.mbp-thumb-slider .ant-slider {
+  margin: 0 !important;
+}
+
+/* ===== R6.29: Always-visible horizontal scrollbar for thumbnail strip ===== */
+/* Native overflow-x-auto scrollbar is unreliable on macOS (hidden by default)
+   and thin grey on Windows 10/11. Force it visible with our color scheme. */
+.mbp-thumb-strip {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 240, 255, 0.50) rgba(255, 255, 255, 0.05);
+  scrollbar-gutter: stable;
+}
+.mbp-thumb-strip::-webkit-scrollbar {
+  height: 8px !important;
+  background: rgba(255, 255, 255, 0.05);
+}
+.mbp-thumb-strip::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.50) !important;
+  border-radius: 4px;
+}
+.mbp-thumb-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.85) !important;
+}
+
+
+
+/* ===== R6.27g: AI Models Hub spin toggle (default OFF per user request) ===== */
+.ai-float-btn-icon--paused {
+  -webkit-animation: none !important;
+  animation: none !important;
+}
+.ai-float-btn-spin-toggle {
+  pointer-events: auto;
+}
+.ai-float-btn {
+  /* Positioning context for absolute toggle child */
+  position: fixed;
+}

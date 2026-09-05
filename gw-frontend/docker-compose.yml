@@ -1,0 +1,55 @@
+version: '3.8'  # 使用 Docker Compose 文件格式版本 3.8
+
+services:
+  gravitationalwave-backend-service:
+    image: dockerhub.ihep.ac.cn/gravitationalwave-qc/gravitational-wave-backend:v60_prod  # 指定镜像
+    container_name: gravitationalwave-backend-service  # 容器名称
+    ports:
+      - "8093:8093"  # 将容器的 8093 端口映射到主机的 8093 端口
+    environment:
+      - SPRING_PROFILES_ACTIVE=daily  # 可以根据需要设置环境变量
+      - SPRING_DATA_MONGODB_HOST=mongodb-service
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_USERNAME=admin
+      - SPRING_DATA_MONGODB_PASSWORD=123456
+      - SPRING_DATA_MONGODB_DATABASE=gravitationalwave
+      - SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE=admin
+      - SPRING_DATA_ELASTICSEARCH_REPOSITORIES_ENABLED=true
+      - SPRING_ELASTICSEARCH_URIS=https://omatlhmtfastview-es.ihep.ac.cn
+      - SPRING_ELASTICSEARCH_USERNAME=omatlhmtfastview
+      - SPRING_ELASTICSEARCH_PASSWD=omatlhmtfastviewpasswd
+    restart: on-failure  # 如果容器退出，则自动重启
+    volumes:
+      - /data/gravitationalwave:/app/Ali_PW
+    networks:
+      - backend-net  # 指定网络（可选）
+
+  gravitationalwave-frontend-service:
+    image: dockerhub.ihep.ac.cn/gravitationalwave-qc/gravitational-wave-frontend:v7_prod
+    container_name: gravitationalwave-frontend-service
+    ports:
+      - "8091:80"  # 映射前端 80 端口到宿主机的 8091 端口
+    environment:
+      - BACKEND_SERVICE_URL=http://gravitationalwave-backend-service:8093  # 动态代理后端容器地址，交付时客户可以直接修改
+      - NGINX_ENVSUBST_FILTER=BACKEND_SERVICE_URL  # Nginx envsubst 替换过滤器，防止原生 $uri 冲突
+    restart: on-failure  # 如果容器退出，则自动重启
+    networks:
+      - backend-net  # 指定网络（可选）
+
+  mongodb-service:
+    image: mongo:6.0.26
+    container_name: mongodb-service
+    ports:
+      - "30017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=123456
+    volumes:
+      - /data/mongodb:/data/db
+    restart: on-failure
+    networks:
+      - backend-net
+
+networks:
+  backend-net:
+    driver: bridge  # 使用桥接网络

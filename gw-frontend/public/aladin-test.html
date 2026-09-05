@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Aladin</title>
+<style>body{margin:0;padding:0;background:#000;overflow:hidden}#aladin{width:100vw;height:100vh}#aladin-status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#00F0FF;font:13px/1.5 monospace;z-index:100;text-align:center;pointer-events:none;text-shadow:0 0 12px rgba(0,240,255,0.6)}#aladin-status.error{color:#FF006E;text-shadow:0 0 12px rgba(255,0,110,0.6)}#aladin-status.ok{display:none}</style>
+</head><body>
+<div id="aladin"></div>
+<div id="aladin-status">Loading Aladin Lite...</div>
+<!-- Aladin Lite v3.8.2 - served locally (no CDN dependency) -->
+<script src="/aladin.js" onerror="document.getElementById('aladin-status').textContent = 'CDN aladin.js FAILED'; document.getElementById('aladin-status').className = 'error';"></script>
+<script>
+var statusEl = document.getElementById('aladin-status');
+function showStatus(msg, isError) {
+  if (statusEl) {
+    statusEl.textContent = msg;
+    statusEl.className = isError ? 'error' : '';
+  }
+}
+var params = new URLSearchParams(window.location.search);
+var fitsUrl = params.get('fits');
+var DEBUG = params.get('debug') === '1';
+if (DEBUG) console.log('[Aladin] Page loaded, A object:', typeof A !== 'undefined' ? 'present' : 'MISSING');
+if (DEBUG) console.log('[Aladin] FITS URL param:', fitsUrl || '(none)');
+
+// Allowlist-based URL validation (defense-in-depth)
+// Blocks protocol-relative (//evil.com), javascript:, data:, and dangerous schemes.
+// v4.54-r5d: tighten to SAME-ORIGIN-only paths OR specific known HTTPS hosts
+// (our /static-files/fits/ backend + Aladin legacy alasky fallback).
+var FITS_HOST_ALLOWLIST = [
+  /^\/[a-zA-Z0-9_\-]/,                 // same-origin path: single '/' + non-slash (blocks protocol-relative //evil.com)
+  /^https?:\/\/[a-z0-9.-]*alasky\.unistra\.fr\//i,   // legacy alasky host
+];
+if (fitsUrl) {
+  var isValid = FITS_HOST_ALLOWLIST.some(function(re) { return re.test(fitsUrl); });
+  if (!isValid) {
+    fitsUrl = null;
+    showStatus('Invalid FITS URL host - showing default survey', false);
+    setTimeout(function() { if (statusEl) statusEl.className = 'ok'; }, 3000);
+  }
+}
+
+// Guard: if aladin.js failed to load, show error instead of crashing
+if (typeof A === 'undefined') {
+  showStatus('A is UNDEFINED - aladin.js did not execute', true);
+} else if (!A.init) {
+  showStatus('A exists but A.init is missing - wrong aladin.js version?', true);
+} else {
+  showStatus('Initializing WebGL + WebAssembly...');
+  if (DEBUG) console.log('[Aladin] Calling A.init...');
+  A.init.then(function() {
+    if (DEBUG) console.log('[Aladin] A.init resolved - creating instance');
+    var a = A.aladin('#aladin', {
+      cooFrame: 'icrs',
+      // R6.11: HiPS background DISABLED. alasky.cds.unistra.fr HiPS tiles
+      // respond in 2-12s; Aladin Lite v3.8.2's AbortController times out at
+      // 5s. Browser limits 6 parallel conns per origin; with 13 HiPS requests
+      // (one per survey in MultiBandDataPanel), all abort → black canvas and
+      // FITS overlay becomes invisible. FITS-only mode: A.image() loads the
+      // FITS file (30s timeout, ample) and renders it as the main view via
+      // WebGL. WCS from FITS header drives projection — no HiPS required.
+      survey: [],  // empty array = no HiPS background (Aladin convention)
+      showLayersControl: true,
+      showCooGridControl: true,
+      showFullscreenControl: true,
+      showZoomControl: true,
+      showSurveyControl: true,
+    });
+
+    // R6.4: stash the Aladin instance so the postMessage overlay-swap handler
+    // can call a.removeLayers() / A.image(newUrl) without reloading the iframe.
+    window.__gwAladin = a;
+
+    showStatus('Aladin ready', false);
+    if (statusEl) statusEl.className = 'ok';
+    if (DEBUG) console.log('[Aladin] Instance created successfully');
+
+    function loadOverlay(url) {
+      if (!url) return;
+      if (DEBUG) console.log('[Aladin] Loading FITS overlay:', url);
+      try { a.removeLayers(); } catch (e) {}
+      A.image(url, {
+        name: 'fits-overlay',
+        successCallback: function(ra, dec, fov) {
+          a.gotoRaDec(ra, dec);
+          a.setFoV(fov * 1.1);
+        },
+        errorCallback: function(err) {
+          showStatus('FITS load failed: ' + (err && err.message ? err.message : 'unknown error'), true);
+        }
+      });
+    }
+
+    // R6.4: listen for parent postMessage to swap FITS overlay without reload.
+    // R6.5: also handle 'gw-hips' to dynamically switch the base HiPS survey
+    // (DSS2 -> 2MASS -> allWISE -> NVSS -> PS1/LEGACY). This is what makes
+    // clicking a HiPS-only thumbnail (e.g. DSS2 Blue) actually change the
+    // main view — R6.4 only handled FITS overlays, so HiPS-only clicks
+    // silently no-op'd (the survey never changed).
+    window.addEventListener('message', function(ev) {
+      if (!ev.data || typeof ev.data.type !== 'string') return;
+      if (ev.data.type === 'gw-fits') {
+        if (typeof ev.data.url !== 'string') return;
+        loadOverlay(ev.data.url);
+        return;
+      }
+      if (ev.data.type === 'gw-hips') {
+        // R6.11: HiPS switching disabled along with the HiPS background.
+        // The Aladin HiPS fetcher cannot reliably reach alasky.cds.unistra.fr
+        // (timeout 5s vs response 2-12s). We acknowledge the parent's intent
+        // (HiPS survey = ev.data.survey) but only use it as a label for the
+        // status indicator. The visual update comes from the gw-fits message
+        // that always follows.
+        if (typeof ev.data.survey !== 'string') return;
+        if (!ev.data.survey.startsWith('P/')) return;
+        if (DEBUG) console.log('[Aladin] HiPS requested (ignored in R6.11):', ev.data.survey);
+        showStatus('Survey: ' + ev.data.survey, false);
+        setTimeout(function() { if (statusEl) statusEl.className = 'ok'; }, 2000);
+        return;
+      }
+    });
+
+    if (fitsUrl) {
+      loadOverlay(fitsUrl);
+    }
+  }).catch(function(err) {
+    if (DEBUG) console.error('[Aladin] A.init FAILED:', err);
+    showStatus('Init failed: ' + (err && err.message ? err.message : String(err)), true);
+  });
+}
+</script>
+</body></html>

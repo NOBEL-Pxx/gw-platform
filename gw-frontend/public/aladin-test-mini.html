@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Aladin Mini</title>
+<!-- R6: lightweight Aladin config for 140x140 thumbnail tiles.
+     - No FITS overlay (DSS2 color background only)
+     - No toolbar/controls (no UI overhead)
+     - Centered on a specific RA/Dec via ?ra=&dec=
+     - Initialized at low FoV (0.25 deg) so the thumbnail shows the right patch of sky
+-->
+<style>body{margin:0;padding:0;background:#000;overflow:hidden}#aladin{width:100vw;height:100vh}#aladin-status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#00F0FF;font:11px/1.4 monospace;z-index:100;text-align:center;pointer-events:none;text-shadow:0 0 8px rgba(0,240,255,0.6);display:none}#aladin-status.error{color:#FF006E}#aladin-status.show{display:block}</style>
+</head><body>
+<div id="aladin"></div>
+<div id="aladin-status"></div>
+<script src="/aladin.js" onerror="document.getElementById('aladin-status').textContent='aladin.js FAILED';document.getElementById('aladin-status').className='error show';"></script>
+<script>
+var statusEl = document.getElementById('aladin-status');
+function showStatus(msg, isError) {
+  if (statusEl) {
+    statusEl.textContent = msg;
+    statusEl.className = (isError ? 'error ' : '') + 'show';
+  }
+}
+var params = new URLSearchParams(window.location.search);
+var ra = parseFloat(params.get('ra'));
+var dec = parseFloat(params.get('dec'));
+var foV = parseFloat(params.get('fov')) || 0.25;
+var DEBUG = params.get('debug') === '1';
+
+if (DEBUG) console.log('[Aladin-mini] ra=' + ra + ' dec=' + dec + ' foV=' + foV);
+
+if (typeof A === 'undefined') {
+  showStatus('A undefined', true);
+} else if (!A.init) {
+  showStatus('A.init missing', true);
+} else {
+  A.init.then(function() {
+    if (DEBUG) console.log('[Aladin-mini] A.init resolved');
+    var mini = A.aladin('#aladin', {
+      // R6: DSS2 color is the default survey — fast, no extra HiPS fetching,
+      // gives a recognizable sky view at this RA/Dec.
+      survey: 'P/DSS2/color',
+      target: (isNaN(ra) || isNaN(dec)) ? '0 0' : (ra + ' ' + dec),
+      fov: foV,
+      cooFrame: 'icrs',
+      // R6: All chrome OFF for thumbnail use — saves render cycles per tile
+      showLayersControl: false,
+      showCooGridControl: false,
+      showFullscreenControl: false,
+      showZoomControl: false,
+      showPanControl: false,
+      showSimbadPointerControl: false,
+      showCoordinates: false,
+      showFov: false,
+      showFrame: false,
+      showCooLocation: false,
+      showProjectionControl: false,
+      showShareControl: false,
+      showGotoControl: false,
+      reticleColor: 'rgba(0,240,255,0.8)',
+      reticleSize: 12,
+    });
+    if (DEBUG) console.log('[Aladin-mini] Instance ready');
+  }).catch(function(err) {
+    if (DEBUG) console.error('[Aladin-mini] Init failed:', err);
+    showStatus('Init failed', true);
+  });
+}
+</script>
+</body></html>

@@ -1,0 +1,74 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                    - key: kubernetes.io/hostname
+                      operator: In
+                      values:
+                        - cn-hangzhou-zjy-d01.10.200.60.116
+          containers:
+          - name: docker
+            image: m.daocloud.io/docker.io/docker:dind
+            command:
+            - cat
+            tty: true
+            volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-sock
+          volumes:
+          - name: docker-sock
+            hostPath:
+              path: /var/run/docker.sock
+          dnsConfig:
+            nameservers:
+            - 10.255.9.2
+        '''
+    }
+  }
+  environment {
+    IMAGE_TAG = "v${env.BUILD_NUMBER}_${params.env}"
+    PARAM_ENV = "${params.env}"
+  }
+  stages {
+    stage('Build-Docker-Image') {
+      steps {
+        script {
+          env.BUILD_ENV = env.PARAM_ENV ?: 'prod' // 设置默认构建环境为'prod'，如果没有指定
+        }
+        container('docker') {
+          sh "docker build -f Dockerfile --build-arg APP_NAME=gravitationalwave-frontend --build-arg APP_BRANCH=${env.GIT_BRANCH} --build-arg APP_COMMITID=${env.GIT_COMMIT} --build-arg JENKINS_BUILDNUM=${BUILD_NUMBER} --build-arg APP_RUN_ENV=${env.PARAM_ENV} -t gravitationalwave-frontend:${env.IMAGE_TAG} ./"
+        }
+      }
+    }
+    stage('Login-Into-Docker') {
+      steps {
+        container('docker') {
+          sh "docker login --username=ascm-org-1710208820455 cr.registry.res.cloud.zhejianglab.com -p 'zjlab@2024'"
+        }
+      }
+    }
+    stage('Push-Images-Docker-to-DockerHub') {
+      steps {
+        container('docker') {
+          sh "docker tag gravitationalwave-frontend:${env.IMAGE_TAG} cr.registry.res.cloud.zhejianglab.com/adcp/gravitationalwave-frontend:${env.IMAGE_TAG}"
+          sh "docker push cr.registry.res.cloud.zhejianglab.com/adcp/gravitationalwave-frontend:${env.IMAGE_TAG}"
+        }
+      }
+    }
+  }
+  post {
+    always {
+      container('docker') {
+        sh 'docker logout'
+      }
+    }
+  }
+}

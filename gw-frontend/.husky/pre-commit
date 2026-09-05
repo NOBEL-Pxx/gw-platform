@@ -1,0 +1,4 @@
+# R6.55: auto-fix first (prettier, simple cleanup), then validate.
+# Downgraded rules + endOfLine auto + lint:fix means this rarely blocks.
+npx eslint . --fix
+npx tsc -b --noEmit

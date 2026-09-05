@@ -1,0 +1,29 @@
+# R6.55: enforce LF in git, even on Windows checkouts.
+# This way .prettierrc.js + .editorconfig see consistent LF on disk.
+
+# Auto-detect text files, normalize to LF
+* text=auto eol=lf
+
+# Specific overrides for files that must be binary or have specific encoding
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.eot binary
+*.mp4 binary
+*.mp3 binary
+*.pdf binary
+*.zip binary
+
+# Shell scripts MUST be LF (otherwise fail on Linux)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Batch/PS1 (Windows-only, keep CRLF for backwards compat)
+*.bat text eol=crlf
+*.ps1 text eol=crlf

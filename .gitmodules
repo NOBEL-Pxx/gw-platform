@@ -1,3 +1,0 @@
-[submodule "gw-frontend"]
-	path = gw-frontend
-	url = git@github.com:GravitationalWaveTeam/gravitationalwave-frontend.git

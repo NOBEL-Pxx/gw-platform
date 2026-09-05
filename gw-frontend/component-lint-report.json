@@ -1,0 +1,1324 @@
+{
+  "timestamp": "2026-09-01T07:17:26.551Z",
+  "limits": {
+    "lines": 300,
+    "useState": 5,
+    "useMemo": 3,
+    "useCallback": 3,
+    "useEffect": 4,
+    "newImage": 5
+  },
+  "violations": [
+    {
+      "file": "src\\components\\AIFloatingButton.tsx",
+      "rule": "file-size",
+      "message": "File is 355 lines (limit 300). Split into sub-components.",
+      "value": 355,
+      "limit": 300
+    },
+    {
+      "file": "src\\components\\AIFloatingButton.tsx",
+      "rule": "hook-count-useCallback",
+      "message": "4 `useCallback`",
+      "value": 4,
+      "limit": 3
+    },
+    {
+      "file": "src\\pages\\admin\\audit\\index.tsx",
+      "rule": "file-size",
+      "message": "File is 326 lines (limit 300). Split into sub-components.",
+      "value": 326,
+      "limit": 300
+    },
+    {
+      "file": "src\\pages\\admin\\provenance\\index.tsx",
+      "rule": "hook-count-useState",
+      "message": "6 `useState`",
+      "value": 6,
+      "limit": 5
+    },
+    {
+      "file": "src\\pages\\assistant\\index.tsx",
+      "rule": "file-size",
+      "message": "File is 1023 lines (limit 300). Split into sub-components.",
+      "value": 1023,
+      "limit": 300
+    },
+    {
+      "file": "src\\pages\\assistant\\index.tsx",
+      "rule": "hook-count-useState",
+      "message": "12 `useState`",
+      "value": 12,
+      "limit": 5
+    },
+    {
+      "file": "src\\pages\\assistant\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "message": "7 `useEffect`",
+      "value": 7,
+      "limit": 4
+    },
+    {
+      "file": "src\\pages\\home\\components\\FireflyViewer.tsx",
+      "rule": "hook-count-useEffect",
+      "message": "5 `useEffect`",
+      "value": 5,
+      "limit": 4
+    },
+    {
+      "file": "src\\pages\\home\\components\\ImageList.tsx",
+      "rule": "file-size",
+      "message": "File is 473 lines (limit 300). Split into sub-components.",
+      "value": 473,
+      "limit": 300
+    },
+    {
+      "file": "src\\pages\\index\\components\\AnomalyClassifyPanel.tsx",
+      "rule": "file-size",
+      "message": "File is 342 lines (limit 300). Split into sub-components.",
+      "value": 342,
+      "limit": 300
+    },
+    {
+      "file": "src\\pages\\index\\components\\MultiBandDataPanel.tsx",
+      "rule": "file-size",
+      "message": "File is 449 lines (limit 300). Split into sub-components.",
+      "value": 449,
+      "limit": 300
+    },
+    {
+      "file": "src\\pages\\index\\components\\MultiBandDataPanel.tsx",
+      "rule": "hook-count-useMemo",
+      "message": "5 `useMemo`",
+      "value": 5,
+      "limit": 3
+    },
+    {
+      "file": "src\\pages\\settings\\index.tsx",
+      "rule": "file-size",
+      "message": "File is 377 lines (limit 300). Split into sub-components.",
+      "value": 377,
+      "limit": 300
+    },
+    {
+      "file": "src\\service\\deepseek.ts",
+      "rule": "file-size",
+      "message": "File is 405 lines (limit 300). Split into sub-components.",
+      "value": 405,
+      "limit": 300
+    }
+  ],
+  "warnings": [],
+  "passed": [
+    {
+      "file": "src\\App.tsx",
+      "rule": "file-size",
+      "value": 25
+    },
+    {
+      "file": "src\\App.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\App.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\App.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\App.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\AIFloatingButton.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\components\\AIFloatingButton.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\AIFloatingButton.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 3
+    },
+    {
+      "file": "src\\components\\ErrorBoundary.tsx",
+      "rule": "file-size",
+      "value": 64
+    },
+    {
+      "file": "src\\components\\ErrorBoundary.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ErrorBoundary.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ErrorBoundary.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ErrorBoundary.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\GWChirpWave.tsx",
+      "rule": "file-size",
+      "value": 138
+    },
+    {
+      "file": "src\\components\\GWChirpWave.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\GWChirpWave.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\GWChirpWave.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\GWChirpWave.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\PreloadSplash.tsx",
+      "rule": "file-size",
+      "value": 113
+    },
+    {
+      "file": "src\\components\\PreloadSplash.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\components\\PreloadSplash.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\PreloadSplash.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\PreloadSplash.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\components\\ProtectedRoute.tsx",
+      "rule": "file-size",
+      "value": 56
+    },
+    {
+      "file": "src\\components\\ProtectedRoute.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ProtectedRoute.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ProtectedRoute.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\ProtectedRoute.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\StarfieldBackground.tsx",
+      "rule": "file-size",
+      "value": 177
+    },
+    {
+      "file": "src\\components\\StarfieldBackground.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\StarfieldBackground.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\components\\StarfieldBackground.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 2
+    },
+    {
+      "file": "src\\components\\StarfieldBackground.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 2
+    },
+    {
+      "file": "src\\constants\\assets.ts",
+      "rule": "file-size",
+      "value": 42
+    },
+    {
+      "file": "src\\constants\\assets.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\constants\\assets.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\constants\\assets.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\constants\\assets.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\contexts\\AuthContext.tsx",
+      "rule": "file-size",
+      "value": 117
+    },
+    {
+      "file": "src\\contexts\\AuthContext.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\contexts\\AuthContext.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\contexts\\AuthContext.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 3
+    },
+    {
+      "file": "src\\contexts\\AuthContext.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\data\\ai-models.ts",
+      "rule": "file-size",
+      "value": 13
+    },
+    {
+      "file": "src\\data\\ai-models.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\data\\ai-models.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\data\\ai-models.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\data\\ai-models.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\hooks\\useCoordinateValidation.ts",
+      "rule": "file-size",
+      "value": 67
+    },
+    {
+      "file": "src\\hooks\\useCoordinateValidation.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\hooks\\useCoordinateValidation.ts",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\hooks\\useCoordinateValidation.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\hooks\\useCoordinateValidation.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\main.tsx",
+      "rule": "file-size",
+      "value": 19
+    },
+    {
+      "file": "src\\main.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\main.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\main.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\main.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\mock\\errorMock.ts",
+      "rule": "file-size",
+      "value": 243
+    },
+    {
+      "file": "src\\mock\\errorMock.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\mock\\errorMock.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\mock\\errorMock.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\mock\\errorMock.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\admin\\audit\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 4
+    },
+    {
+      "file": "src\\pages\\admin\\audit\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\admin\\audit\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\admin\\audit\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\admin\\config\\index.tsx",
+      "rule": "file-size",
+      "value": 255
+    },
+    {
+      "file": "src\\pages\\admin\\config\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\admin\\config\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\admin\\config\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\admin\\config\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\admin\\provenance\\index.tsx",
+      "rule": "file-size",
+      "value": 260
+    },
+    {
+      "file": "src\\pages\\admin\\provenance\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\admin\\provenance\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\admin\\provenance\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\assistant\\conversation-store.ts",
+      "rule": "file-size",
+      "value": 239
+    },
+    {
+      "file": "src\\pages\\assistant\\conversation-store.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\conversation-store.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\conversation-store.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\conversation-store.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\assistant\\sanitize.ts",
+      "rule": "file-size",
+      "value": 89
+    },
+    {
+      "file": "src\\pages\\assistant\\sanitize.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\sanitize.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\sanitize.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\assistant\\sanitize.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\collections\\index.tsx",
+      "rule": "file-size",
+      "value": 128
+    },
+    {
+      "file": "src\\pages\\collections\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\collections\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\collections\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\collections\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\collections\\shared.tsx",
+      "rule": "file-size",
+      "value": 82
+    },
+    {
+      "file": "src\\pages\\collections\\shared.tsx",
+      "rule": "hook-count-useState",
+      "value": 4
+    },
+    {
+      "file": "src\\pages\\collections\\shared.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\collections\\shared.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\collections\\shared.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\common\\Layout.tsx",
+      "rule": "file-size",
+      "value": 209
+    },
+    {
+      "file": "src\\pages\\common\\Layout.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\common\\Layout.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\common\\Layout.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\common\\Layout.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\favorites\\index.tsx",
+      "rule": "file-size",
+      "value": 73
+    },
+    {
+      "file": "src\\pages\\favorites\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\favorites\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\favorites\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\favorites\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\Aladin1.tsx",
+      "rule": "file-size",
+      "value": 42
+    },
+    {
+      "file": "src\\pages\\home\\components\\Aladin1.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Aladin1.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Aladin1.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Aladin1.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Comments.tsx",
+      "rule": "file-size",
+      "value": 202
+    },
+    {
+      "file": "src\\pages\\home\\components\\Comments.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\home\\components\\Comments.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Comments.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Comments.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\CommentsTrigger.tsx",
+      "rule": "file-size",
+      "value": 32
+    },
+    {
+      "file": "src\\pages\\home\\components\\CommentsTrigger.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\CommentsTrigger.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\CommentsTrigger.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\CommentsTrigger.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\FireflyViewer.tsx",
+      "rule": "file-size",
+      "value": 229
+    },
+    {
+      "file": "src\\pages\\home\\components\\FireflyViewer.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\home\\components\\FireflyViewer.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\FireflyViewer.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\home\\components\\ImageList.tsx",
+      "rule": "hook-count-useState",
+      "value": 4
+    },
+    {
+      "file": "src\\pages\\home\\components\\ImageList.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\home\\components\\ImageList.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\home\\components\\ImageList.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\home\\components\\MiniAladin.tsx",
+      "rule": "file-size",
+      "value": 155
+    },
+    {
+      "file": "src\\pages\\home\\components\\MiniAladin.tsx",
+      "rule": "hook-count-useState",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\home\\components\\MiniAladin.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\MiniAladin.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\components\\MiniAladin.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\home\\components\\Search.tsx",
+      "rule": "file-size",
+      "value": 55
+    },
+    {
+      "file": "src\\pages\\home\\components\\Search.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Search.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Search.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\components\\Search.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\index.tsx",
+      "rule": "file-size",
+      "value": 171
+    },
+    {
+      "file": "src\\pages\\home\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\home\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\home\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\components\\AnomalyClassifyPanel.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\components\\AnomalyClassifyPanel.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\AnomalyClassifyPanel.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\components\\AnomalyClassifyPanel.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorDetailPanel.tsx",
+      "rule": "file-size",
+      "value": 157
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorDetailPanel.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorDetailPanel.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorDetailPanel.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorDetailPanel.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorListPanel.tsx",
+      "rule": "file-size",
+      "value": 117
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorListPanel.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorListPanel.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorListPanel.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\ErrorListPanel.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\components\\MergeRGBPanel.tsx",
+      "rule": "file-size",
+      "value": 259
+    },
+    {
+      "file": "src\\pages\\index\\components\\MergeRGBPanel.tsx",
+      "rule": "hook-count-useState",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\components\\MergeRGBPanel.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\index\\components\\MergeRGBPanel.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\index\\components\\MergeRGBPanel.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\MultiBandDataPanel.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\index\\components\\MultiBandDataPanel.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\components\\MultiBandDataPanel.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\index\\index.tsx",
+      "rule": "file-size",
+      "value": 88
+    },
+    {
+      "file": "src\\pages\\index\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\index\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\landing\\index.tsx",
+      "rule": "file-size",
+      "value": 250
+    },
+    {
+      "file": "src\\pages\\landing\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\landing\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\landing\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\landing\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 2
+    },
+    {
+      "file": "src\\pages\\login\\index.tsx",
+      "rule": "file-size",
+      "value": 161
+    },
+    {
+      "file": "src\\pages\\login\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\login\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\login\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\login\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\my-comments\\index.tsx",
+      "rule": "file-size",
+      "value": 73
+    },
+    {
+      "file": "src\\pages\\my-comments\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 3
+    },
+    {
+      "file": "src\\pages\\my-comments\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\my-comments\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\my-comments\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\settings\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\settings\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\settings\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\settings\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\tod\\index.tsx",
+      "rule": "file-size",
+      "value": 211
+    },
+    {
+      "file": "src\\pages\\tod\\index.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\tod\\index.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 1
+    },
+    {
+      "file": "src\\pages\\tod\\index.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\pages\\tod\\index.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\router.tsx",
+      "rule": "file-size",
+      "value": 119
+    },
+    {
+      "file": "src\\router.tsx",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\router.tsx",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\router.tsx",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\router.tsx",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\service\\deepseek.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\service\\deepseek.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\service\\deepseek.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\service\\deepseek.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\service.ts",
+      "rule": "file-size",
+      "value": 294
+    },
+    {
+      "file": "src\\service.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\service.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\service.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\service.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\types\\api.ts",
+      "rule": "file-size",
+      "value": 293
+    },
+    {
+      "file": "src\\types\\api.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\types\\api.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\types\\api.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\types\\api.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\AntdMessage.ts",
+      "rule": "file-size",
+      "value": 20
+    },
+    {
+      "file": "src\\util\\AntdMessage.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\AntdMessage.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\AntdMessage.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\AntdMessage.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\bandOrder.ts",
+      "rule": "file-size",
+      "value": 270
+    },
+    {
+      "file": "src\\util\\bandOrder.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\bandOrder.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\bandOrder.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\bandOrder.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\export.ts",
+      "rule": "file-size",
+      "value": 17
+    },
+    {
+      "file": "src\\util\\export.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\export.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\export.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\export.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "file-size",
+      "value": 130
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\preload.ts",
+      "rule": "new-image-prefetch",
+      "value": 1
+    },
+    {
+      "file": "src\\util\\url.ts",
+      "rule": "file-size",
+      "value": 52
+    },
+    {
+      "file": "src\\util\\url.ts",
+      "rule": "hook-count-useState",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\url.ts",
+      "rule": "hook-count-useMemo",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\url.ts",
+      "rule": "hook-count-useCallback",
+      "value": 0
+    },
+    {
+      "file": "src\\util\\url.ts",
+      "rule": "hook-count-useEffect",
+      "value": 0
+    }
+  ]
+}

@@ -1,0 +1,876 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .flex-center {
+    @apply flex justify-center items-center;
+  }
+  .glass-card {
+    @apply rounded-2xl border border-glass-border bg-glass-white;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  .glass-card-hover {
+    @apply glass-card;
+    transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+  }
+  .glass-card-hover:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 8px 40px rgba(0, 240, 255, 0.06), 0 0 80px rgba(0, 240, 255, 0.03);
+  }
+  .aurora-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #00F0FF, #7C3AED, #FF006E);
+  }
+  .aurora-border {
+    position: relative;
+  }
+  .aurora-border::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0,240,255,0.3), rgba(124,58,237,0.3), rgba(255,0,110,0.3));
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask-composite: xor;
+    pointer-events: none;
+  }
+}
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 500;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.90);
+  background-color: #0A0F24;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Aurora nebula background animation */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(124, 58, 237, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 50% at 80% 80%, rgba(0, 240, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(255, 0, 110, 0.03) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+  /* Static — no animation to avoid compositing cost */
+}
+
+a {
+  font-weight: 600;
+  color: #00F0FF;
+  text-decoration: inherit;
+  transition: color 0.2s ease;
+}
+a:hover {
+  color: #7C3AED;
+}
+
+html, body, #root {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* v4.17: Bright scrollbars — clearly visible on dark background, !important to beat any override */
+::-webkit-scrollbar {
+  width: 12px !important;
+  height: 12px !important;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-radius: 6px !important;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.50) !important;
+  border-radius: 6px !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.75) !important;
+  background-clip: padding-box !important;
+}
+::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+/* Ant Design Table scroll containers */
+.ant-table-content::-webkit-scrollbar,
+.ant-table-body::-webkit-scrollbar {
+  width: 12px !important;
+  height: 12px !important;
+}
+.ant-table-content::-webkit-scrollbar-thumb,
+.ant-table-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.50) !important;
+  border-radius: 6px !important;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: auto !important;
+  scrollbar-color: rgba(0, 240, 255, 0.50) rgba(255, 255, 255, 0.08) !important;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 600;
+  font-family: inherit;
+  background-color: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: background-color 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+  color: rgba(255, 255, 255, 0.90);
+}
+button:hover {
+  border-color: rgba(0, 240, 255, 0.3);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #00F0FF;
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* Selection color */
+::selection {
+  background: rgba(0, 240, 255, 0.25);
+  color: #fff;
+}
+
+
+/* ═══════════════════════════════════════════════════════════ */
+/*  LANDING PAGE — text-shadow glow (GPU-friendly)            */
+/* ═══════════════════════════════════════════════════════════ */
+.landing-title {
+  /* will-change added on hover via .landing-entry-card:hover */
+}
+.landing-title-line1 {
+  text-shadow:
+    0 0 30px rgba(0,240,255,0.55),
+    0 0 60px rgba(124,58,237,0.45),
+    0 0 100px rgba(255,0,110,0.25),
+    0 0 180px rgba(0,240,255,0.18);
+}
+.landing-title-line2 {
+  text-shadow:
+    0 0 30px rgba(124,58,237,0.55),
+    0 0 60px rgba(0,240,255,0.45),
+    0 0 100px rgba(255,0,110,0.25),
+    0 0 180px rgba(124,58,237,0.18);
+}
+
+/* Keyframes for landing — defined once in CSS, not injected per render */
+@keyframes orbitFadeSpin {
+  0% { transform: translate(-50%, -50%) rotate(0deg); opacity: 0.25; }
+  50% { opacity: 0.75; }
+  100% { transform: translate(-50%, -50%) rotate(360deg); opacity: 0.25; }
+}
+@keyframes auroraFlow {
+  0%, 100% { background-position: 0% 0%; }
+  50% { background-position: 0% 100%; }
+}
+
+/* Landing card hover — icon-only default, text reveal on hover (v4.10) */
+.landing-entry-card {
+  /* Base styles moved from inline */
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 0;
+  /* Scroll animation initial state (v4.12) */
+  opacity: 0;
+  transform: translateY(40px);
+  /* Transitions: scroll animation + hover effects */
+  transition: opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              border-color 0.5s ease,
+              box-shadow 0.5s ease,
+              background 0.5s ease;
+}
+.landing-entry-card:hover {
+  border-color: var(--card-accent);
+  box-shadow: 0 0 60px rgba(0,240,255,0.12), 0 0 48px rgba(0,0,0,0.55);
+  background: rgba(255,255,255,0.06);
+  transform: translateY(-6px);
+  will-change: transform;
+  transition-delay: 0s !important;  /* Prevent nth-child stagger from leaking into hover */
+}
+/* Higher specificity to beat .landing-cards-visible > .landing-entry-card */
+.landing-cards-visible > .landing-entry-card:hover {
+  transform: translateY(-6px);
+  transition-delay: 0s !important;
+}
+.landing-entry-card:focus-visible {
+  outline: 2px solid var(--card-accent);
+  outline-offset: 2px;
+  border-color: var(--card-accent);
+  box-shadow: 0 0 60px rgba(0,240,255,0.12), 0 0 48px rgba(0,0,0,0.55);
+  transform: translateY(-6px);
+}
+
+/* Card icon layer — visible by default, fades + blurs on hover */
+.landing-card-icon {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), transform 500ms cubic-bezier(0.4, 0, 0.2, 1), filter 500ms ease;
+}
+.landing-entry-card:hover .landing-card-icon,
+.landing-entry-card:focus-visible .landing-card-icon {
+  opacity: 0.12;
+  transform: scale(1.1);
+  filter: blur(4px);
+  will-change: opacity, transform, filter;
+}
+
+/* Card text layer — hidden by default, slides up + fades in on hover */
+.landing-card-text {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.landing-entry-card:hover .landing-card-text,
+.landing-entry-card:focus-visible .landing-card-text {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Card accent glow bar — expands on hover */
+.landing-card-glow-bar {
+  width: 0;
+  transition: width 500ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.landing-entry-card:hover .landing-card-glow-bar,
+.landing-entry-card:focus-visible .landing-card-glow-bar {
+  width: 40%;
+}
+
+/* Card artistic text gradient */
+.landing-card-artistic-text {
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+
+/* ================================================================ */
+/*  AI FLOATING BUTTON                                               */
+/* ================================================================ */
+
+.ai-float-btn {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  width: 56px;
+  height: 56px;
+  padding: 0 !important;          /* Override global button padding */
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 240, 255, 0.30) !important;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(124, 58, 237, 0.12)) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow:
+    0 0 30px rgba(0, 240, 255, 0.15),
+    0 0 60px rgba(124, 58, 237, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.35s ease, box-shadow 0.35s ease, background 0.35s ease;
+  overflow: visible;
+}
+
+.ai-float-btn::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 240, 255, 0.12);
+  animation: aiPulseRing 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.ai-float-btn:hover {
+  will-change: transform;
+  transform: scale(1.12);
+  border-color: rgba(0, 240, 255, 0.55) !important;
+  box-shadow:
+    0 0 50px rgba(0, 240, 255, 0.25),
+    0 0 90px rgba(124, 58, 237, 0.15),
+    0 12px 40px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(124, 58, 237, 0.18)) !important;
+}
+
+.ai-float-btn:active {
+  transform: scale(0.95);
+  transition: transform 0.1s ease;
+}
+
+
+.ai-float-btn-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  -webkit-animation: aiSpinSlow 8s linear infinite;
+  animation: aiSpinSlow 8s linear infinite;
+  filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.5));
+  position: relative;
+  z-index: 1;
+}
+
+/* Dual-prefixed keyframes for Safari < 15 compatibility */
+@-webkit-keyframes aiSpinSlow {
+  from { -webkit-transform: rotate(0deg); transform: rotate(0deg); }
+  to { -webkit-transform: rotate(360deg); transform: rotate(360deg); }
+}
+@keyframes aiSpinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@-webkit-keyframes aiPulseRing {
+  0%, 100% { opacity: 0.4; -webkit-transform: scale(1); transform: scale(1); }
+  50% { opacity: 1; -webkit-transform: scale(1.06); transform: scale(1.06); }
+}
+@keyframes aiPulseRing {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+/* Respect user motion preferences (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    animation-timing-function: step-end !important;
+  }
+  /* Disable continuous animations */
+  .ai-float-btn-icon {
+    animation: none !important;
+    filter: drop-shadow(0 0 8px rgba(0, 240, 255, 0.3));
+  }
+  /* Disable scanline CRT overlay */
+  [style*="repeating-linear-gradient"] {
+    background: transparent !important;
+  }
+  /* Stop all tailwind animations */
+  .animate-ping, .animate-pulse, .animate-spin, .animate-bounce {
+    animation: none !important;
+  }
+  /* Landing page cards */
+  .landing-entry-card, .landing-entry-card:hover,
+  .landing-cards-grid, .landing-cards-visible {
+    transition: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  /* GW animations */
+  .gw-ripple, .gw-bh, .gw-bh-orbit, .gw-chirp, .landing-title {
+    animation: none !important;
+  }
+}
+
+/* === Gravitational Wave landing page keyframes (moved from landing/index.tsx) === */
+@keyframes einsteinRotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+@keyframes gwRipple {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+  25% { opacity: 0.7; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+@keyframes blackHoleOrbit {
+  0%, 100% { transform: translate(-50%, -50%) translateX(0) translateY(0); }
+  15% { transform: translate(-50%, -50%) translateX(12px) translateY(-6px); }
+  30% { transform: translate(-50%, -50%) translateX(8px) translateY(-2px); }
+  50% { transform: translate(-50%, -50%) translateX(-4px) translateY(8px); }
+  70% { transform: translate(-50%, -50%) translateX(-14px) translateY(4px); }
+  85% { transform: translate(-50%, -50%) translateX(-6px) translateY(-4px); }
+}
+@keyframes chirpPulse {
+  0%, 100% { opacity: 0.4; filter: drop-shadow(0 0 4px rgba(0,240,255,0.3)); }
+  25% { opacity: 0.7; filter: drop-shadow(0 0 8px rgba(124,58,237,0.5)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 12px rgba(0,240,255,0.8)) drop-shadow(0 0 20px rgba(124,58,237,0.5)); }
+  75% { opacity: 0.7; filter: drop-shadow(0 0 8px rgba(0,240,255,0.5)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gw-ripple, .gw-bh, .gw-bh-orbit, .gw-chirp { animation: none !important; }
+  .landing-title { animation: none !important; }
+}
+
+/* === v4.14: Landing page animations === */
+@keyframes landingFadeUp {
+  from { opacity: 0; transform: translateY(35px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Color-shifting gradient */
+@keyframes landingTitleFlow {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 0% 100%; }
+}
+
+/* Smooth orbital rotation for dual black holes */
+@keyframes blackHoleRotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+
+
+/* ================================================================ */
+/*  ANT DESIGN 5 - COMPLETE DARK THEME OVERRIDES                      */
+/* ================================================================ */
+
+/* --- Card --- */
+.ant-card {
+  contain: layout style;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 16px !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-card-head {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-card-head-title {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 700 !important;
+}
+
+/* --- Table --- */
+.ant-table {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255, 255, 255, 0.70) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+  font-weight: 700 !important;
+}
+.ant-table-tbody > tr > td {
+  border-color: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.87) !important;
+  font-weight: 500 !important;
+}
+/* Row hover - much more visible */
+.ant-table-tbody > tr:hover > td {
+  background: rgba(0, 240, 255, 0.06) !important;
+}
+/* Row selected - CLEARLY visible */
+.ant-table-tbody > tr.ant-table-row-selected > td {
+  background: rgba(0, 240, 255, 0.10) !important;
+  border-color: rgba(0, 240, 255, 0.15) !important;
+}
+.ant-table-tbody > tr.ant-table-row-selected:hover > td {
+  background: rgba(0, 240, 255, 0.14) !important;
+}
+
+/* --- Radio (row selection) --- */
+.ant-radio-inner {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+.ant-radio-checked .ant-radio-inner {
+  background: #00F0FF !important;
+  border-color: #00F0FF !important;
+}
+.ant-radio-checked .ant-radio-inner::after {
+  background: #0A0A1A !important;
+}
+.ant-radio-wrapper {
+  color: rgba(255, 255, 255, 0.87) !important;
+}
+
+/* --- Pagination --- */
+.ant-pagination-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+.ant-pagination-item a {
+  color: rgba(255, 255, 255, 0.70) !important;
+  font-weight: 600 !important;
+}
+.ant-pagination-item-active {
+  background: rgba(0, 240, 255, 0.18) !important;
+  border-color: rgba(0, 240, 255, 0.35) !important;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15) !important;
+}
+.ant-pagination-item-active a {
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-pagination-item:hover {
+  border-color: rgba(0, 240, 255, 0.25) !important;
+}
+.ant-pagination-item:hover a {
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-pagination-prev .ant-pagination-item-link,
+.ant-pagination-next .ant-pagination-item-link {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+/* --- Input --- */
+.ant-input, .ant-input-affix-wrapper {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-input::placeholder, .ant-input-affix-wrapper input::placeholder {
+  color: rgba(255, 255, 255, 0.35) !important;
+}
+.ant-input:focus, .ant-input-affix-wrapper:focus, .ant-input-affix-wrapper-focused {
+  border-color: rgba(0, 240, 255, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.12) !important;
+}
+.ant-input-password-icon {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-input-password-icon:hover {
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+/* --- Select --- */
+.ant-select-selector {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+.ant-select-selection-item {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-select-arrow {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-select-dropdown {
+  background: #0A0F24 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.ant-select-item {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+.ant-select-item-option-selected {
+  background: rgba(0, 240, 255, 0.12) !important;
+  color: #00F0FF !important;
+  font-weight: 600 !important;
+}
+.ant-select-item-option-active {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* --- Modal --- */
+.ant-modal-content {
+  background: #0A0F24 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+}
+.ant-modal-header {
+  background: transparent !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.ant-modal-title {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 700 !important;
+}
+.ant-modal-close {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+.ant-modal-close:hover {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+/* --- Tabs --- */
+.ant-tabs-tab {
+  color: rgba(255, 255, 255, 0.45) !important;
+  font-weight: 500 !important;
+}
+.ant-tabs-tab-active {
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-tabs-ink-bar {
+  background: linear-gradient(90deg, #00F0FF, #7C3AED) !important;
+  height: 2px !important;
+}
+.ant-tabs-nav::before {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* --- Segmented --- */
+.ant-segmented {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.ant-segmented-item {
+  color: rgba(255, 255, 255, 0.55) !important;
+  font-weight: 500 !important;
+}
+.ant-segmented-item-selected {
+  background: rgba(0, 240, 255, 0.18) !important;
+  color: #00F0FF !important;
+  font-weight: 700 !important;
+}
+.ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+/* --- Button --- */
+.ant-btn {
+  font-weight: 600 !important;
+}
+.ant-btn-primary {
+  background: linear-gradient(135deg, #7C3AED, #3B82F6) !important;
+  border: none !important;
+  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3) !important;
+  font-weight: 700 !important;
+}
+.ant-btn-primary:hover {
+  background: linear-gradient(135deg, #8B5CF6, #60A5FA) !important;
+  box-shadow: 0 4px 22px rgba(124, 58, 237, 0.5) !important;
+}
+.ant-btn-default {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+.ant-btn-default:hover {
+  border-color: rgba(0, 240, 255, 0.30) !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* --- Switch (AI Chat toggle) --- */
+.ant-switch-checked {
+  background: #00F0FF !important;
+}
+.ant-switch-checked:hover:not(.ant-switch-disabled) {
+  background: #33F5FF !important;
+}
+/* --- Form --- */
+.ant-form-item-label > label {
+  color: rgba(255, 255, 255, 0.70) !important;
+  font-weight: 600 !important;
+}
+.ant-form-item-explain-error {
+  color: #FF006E !important;
+}
+
+/* --- Tag --- */
+.ant-tag {
+  font-weight: 600 !important;
+}
+
+/* --- Empty --- */
+.ant-empty-description {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+
+/* --- Spin --- */
+.ant-spin-dot-item {
+  background: #00F0FF !important;
+}
+
+/* --- Descriptions --- */
+.ant-descriptions-item-label {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.60) !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+.ant-descriptions-item-content {
+  background: rgba(255, 255, 255, 0.02) !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* --- List --- */
+.ant-list-item {
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+.ant-list-item-meta-title {
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-weight: 600 !important;
+}
+.ant-list-item-meta-description {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+/* --- Splitter --- */
+.ant-splitter-bar {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+.ant-splitter-bar:hover {
+  background: rgba(0, 240, 255, 0.15) !important;
+}
+
+/* --- Tooltip --- */
+.ant-tooltip-inner {
+  background: rgba(10, 15, 36, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.87) !important;
+}
+
+/* --- InputNumber --- */
+.ant-input-number {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+.ant-input-number-input {
+  color: rgba(255, 255, 255, 0.90) !important;
+  font-weight: 500 !important;
+}
+.ant-input-number-handler {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+.ant-input-number-handler span {
+  color: rgba(255, 255, 255, 0.50) !important;
+}
+
+/* --- Divider --- */
+.ant-divider {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* === Landing Cards Scroll Animation (v4.12) === */
+.landing-cards-grid {
+  opacity: 0;
+  transform: translateY(60px);
+  transition: opacity 0.8s cubic-bezier(0.22, 0.61, 0.36, 1),
+              transform 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.landing-cards-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.landing-cards-visible > .landing-entry-card:nth-child(1) { transition-delay: 0ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(2) { transition-delay: 100ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(3) { transition-delay: 200ms; }
+.landing-cards-visible > .landing-entry-card:nth-child(4) { transition-delay: 300ms; }
+
+.landing-cards-visible > .landing-entry-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Icon edge blur — soft radial mask blends edges into dark background */
+.landing-card-icon img {
+  mask-image: radial-gradient(ellipse 65% 65% at center, black 50%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 65% 65% at center, black 50%, transparent 100%);
+}
+
+.landing-entry-card:hover .landing-card-icon img {
+  transform: scale(1.08);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+
+/* v4.17: Firefly cut slider — dark theme visibility */
+.cut-slider .ant-slider-rail { background-color: rgba(255,255,255,0.10) !important; }
+.cut-slider .ant-slider-track { background-color: rgba(0,240,255,0.5) !important; }
+.cut-slider:hover .ant-slider-track { background-color: rgba(0,240,255,0.7) !important; }
+.cut-slider .ant-slider-handle::after { box-shadow: 0 0 0 2px rgba(0,240,255,0.5) !important; }
+.cut-slider .ant-slider-handle:hover::after { box-shadow: 0 0 0 3px rgba(0,240,255,0.7) !important; }
+.cut-input .ant-input-number-input { color: rgba(255,255,255,0.8) !important; background: transparent !important; }
+
+
+
+/* All immediate children of a Splitter panel must fill available height */
+.ant-splitter-panel > :first-child {
+  height: 100%;
+}
+
+/* Ensure Ant Design Tables inside panels have proper scroll */
+.ant-splitter-panel .ant-table-wrapper,
+.ant-splitter-panel .ant-table-container {
+  height: 100%;
+}
+
+.ant-splitter-panel .ant-spin-container {
+  height: calc(100% - 56px);  /* minus pagination bar */
+}
+
+
+
+/* ================================================================ */
+/*  v4.36: AI Code Block Formatting (used by sanitize.ts)            */
+/* ================================================================ */
+.ai-code-block {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 11.5px;
+  color: #C9D1D9;
+  line-height: 1.5;
+}
+.ai-inline-code {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+  color: #FFB347;
+}
+
+/* v4.36: High contrast mode support (WCAG 2.3.2) */
+@media (prefers-contrast: high) {
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 240, 255, 0.75) !important;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.15) !important;
+  }
+  * {
+    border-color: rgba(255, 255, 255, 0.2) !important;
+  }
+}
+
+/* v4.36: Focus indicator enhancements (WCAG 2.4.7) */
+*:focus-visible {
+  outline: 2px solid #00F0FF !important;
+  outline-offset: 2px !important;
+}
+.ant-btn:focus-visible,
+.ant-input:focus-visible,
+.ant-select-focused .ant-select-selector {
+  outline: 2px solid #00F0FF !important;
+  outline-offset: 1px !important;
+}
