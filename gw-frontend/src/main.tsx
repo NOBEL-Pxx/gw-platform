@@ -11,8 +11,14 @@ import { createRoot } from 'react-dom/client'
 import AntdMessage from '@/util/AntdMessage.ts'
 import { App as AntdApp } from 'antd'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { initCspMonitor } from '@/util/cspMonitor'
 import App from './App.tsx'
 import './index.css'
+
+// R6.61.c: CSP violation monitor. Sends 'securitypolicyviolation' events to
+// /pipeline/security/csp-violation for backend logging. Catches issues like
+// accidental 'wasm-unsafe-eval' removal (would silently break Aladin Lite).
+initCspMonitor()
 
 createRoot(document.getElementById('root')!).render(
   // <StrictMode>

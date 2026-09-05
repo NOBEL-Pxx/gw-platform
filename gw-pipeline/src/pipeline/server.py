@@ -118,6 +118,16 @@ except Exception as e:
     import logging
     logging.getLogger("pipeline.startup").warning(f"hips router not loaded: {e}")
 
+# R6.61.c: CSP violation reporter (frontend cspMonitor.ts POSTs here).
+try:
+    from pipeline.routes.security import router as security_router
+    app.include_router(security_router, prefix="/pipeline", tags=["security"])
+    import logging as _logging_sec
+    _logging_sec.getLogger("pipeline.startup").info("security router loaded: %s", [r.path for r in security_router.routes])
+except Exception as e:
+    import logging as _logging_sec
+    _logging_sec.getLogger("pipeline.startup").warning(f"security router not loaded: {e}")
+
 @app.on_event("startup")
 async def startup_init():
     """Initialize persistent subsystems on server start (v4.16)."""
