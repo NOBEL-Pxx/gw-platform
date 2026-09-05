@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "templates": {
+    "critical": {
+      "title": "🔴 CRITICAL: {service} {event}",
+      "body": "**Severity**: Critical\n**Time**: {timestamp}\n**Service**: {service}\n**Event**: {event}\n**Details**: {details}\n\nAction required immediately."
+    },
+    "warning": {
+      "title": "🟡 WARNING: {service} {event}",
+      "body": "**Severity**: Warning\n**Time**: {timestamp}\n**Service**: {service}\n**Event**: {event}\n**Details**: {details}"
+    },
+    "info": {
+      "title": "ℹ️ INFO: {service} {event}",
+      "body": "**Time**: {timestamp}\n**Service**: {service}\n**Event**: {event}\n**Details**: {details}"
+    }
+  },
+  "webhooks": {
+    "wechat-work": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY",
+    "dingtalk": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+    "slack": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  },
+  "default_channel": "wechat-work"
+}
