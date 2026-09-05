@@ -33,6 +33,9 @@ interface Props {
 // /pipeline/merge-rgb runs at 100² (size² cost). 140 → 100 dropped merge-rgb
 // from 5s to 1.3s with no visible quality loss on a ~470px panel.
 const THUMB = 100
+// R6.61.b: thumb uses 400px for HiPS cutout (preserves R6.13 strategy —
+// HiPS JPEG at 400 looks crisp on ~470px panel; 100px FITS is just fallback).
+const THUMB_HIPS_SIZE = 400
 
 // R6.27g: revert to direct CDS URL — Docker Desktop on local Windows
 // intercepts HTTPS outbound from containers (returns 500 with
@@ -319,57 +322,47 @@ function hipsIdForEntry(e: OrderedEntry): string {
 
 // R6.2 lean + R6.6 HiPS-preferred + R6.7a per-survey stretch:
 // thumb URL is a pure function.
-// R6.6 fix: prefer alasky HiPS JPEG cutout for HiPS-capable surveys
-// (DSS2/LEGACY/2MASS/allWISE/NVSS). NVSS local img_path is a broken 15x15
-// placeholder that the big <img> renders as a 15x15 dot (maxWidth/maxHeight
-// don't expand a small natural image; need explicit width/height to do so).
-// HiPS cutout always returns real sky data at the requested coordinates.
-// AliCPT-1/Planck have no public HiPS -> fall through to local img_path or
-// /pipeline/thumbnail as before.
-// R6.29c: takes contrastAdjust state as 4th arg so RGB composite can react to slider.
-// R6.30: takes quality param for per-tile Hi-Q override.
-function thumbUrl(
+// R6.61.b: shared factory function. Pure function of (entry, size, coords,
+// contrastAdjust, quality) → URL. thumbUrl and largeImageUrl are thin wrappers
+// that pick the size. This guarantees thumb and big URLs differ ONLY in the
+// size param when all other inputs match (testable invariant).
+//
+// Logic mirrors R6.6/R6.16/R6.28/R6.29c/R6.30:
+//   - RGB + hipsColor + ra/dec: merge-rgb (if quality=='high' AND rgbChannels) else hipsCutoutUrl
+//   - RGB without hipsColor: substitute size param in e.url (R6.16 stitching)
+//   - Band + ra/dec + getHipsId: hipsCutoutUrl (HiPS path)
+//   - Band without HiPS: /pipeline/thumbnail (FITS path), or img_path fallback
+//
+// Per-tile quality is the caller's responsibility: thumbUrl passes caller
+// quality (forceStd per-tile), largeImageUrl passes getHipsQuality for RGB HiPS.
+//
+// R6.61.b: exported for vitest consistency testing.
+export function buildImageUrl(
   e: OrderedEntry,
+  size: number,
   ra?: number,
   dec?: number,
   contrastAdjust?: Record<string, number>,
   quality: 'standard' | 'high' = 'standard',
 ): string {
   // R6.27i.d: per-survey DS9 pixel-level profile (stretch + cut).
-  // Falls back to 'asinh' for unknown surveys (the previous R6.7d default).
   const profile = HIPS_PROFILE[e.survey] || { stretch: 'asinh' }
 
   if (e.kind === 'rgb') {
-    // R6.16: HiPS-color RGB (e.g. 2MASS) uses HiPS cutout for thumb.
+    // R6.16: HiPS-color RGB (e.g. 2MASS) uses HiPS cutout for thumbnail.
     if (e.hipsColor && ra !== undefined && dec !== undefined) {
-      // R6.28: per-channel Hi-Q routing. When quality=='high' AND we have
-      // rgbChannels, route to backend /pipeline/merge-rgb?mode=hips which
-      // fetches raw FITS per channel and applies per-channel cut+stretch+dither.
-      // R6.30: use per-tile quality (allows forceStd per RGB composite).
-      const q = quality
-      if (q === 'high' && e.rgbChannels) {
+      // R6.28: per-channel Hi-Q routing. When quality=='high' AND rgbChannels,
+      // route to backend /pipeline/merge-rgb?mode=hips for FITS-based rendering.
+      if (quality === 'high' && e.rgbChannels) {
         // R6.29c: apply per-channel contrast slider values to cuts.
-        // RGB composite now reacts to slider drag on its component bands.
         const rBand = hipsBandName(e.rgbChannels.r)
         const gBand = hipsBandName(e.rgbChannels.g)
         const bBand = hipsBandName(e.rgbChannels.b)
         const defaultLow = profile.cutMinPct ?? 0.5
         const defaultHigh = profile.cutMaxPct ?? 99.5
-        const rCuts = contrastToCuts(
-          contrastAdjust?.[rBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const gCuts = contrastToCuts(
-          contrastAdjust?.[gBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const bCuts = contrastToCuts(
-          contrastAdjust?.[bBand],
-          defaultLow,
-          defaultHigh,
-        )
+        const rCuts = contrastToCuts(contrastAdjust?.[rBand], defaultLow, defaultHigh)
+        const gCuts = contrastToCuts(contrastAdjust?.[gBand], defaultLow, defaultHigh)
+        const bCuts = contrastToCuts(contrastAdjust?.[bBand], defaultLow, defaultHigh)
         const params = new URLSearchParams({
           mode: 'hips',
           r_hips: e.rgbChannels.r,
@@ -377,7 +370,7 @@ function thumbUrl(
           b_hips: e.rgbChannels.b,
           ra: String(ra),
           dec: String(dec),
-          size: '400',
+          size: String(size),
           r_stretch: profile.stretch,
           g_stretch: profile.stretch,
           b_stretch: profile.stretch,
@@ -394,24 +387,25 @@ function thumbUrl(
         e.hipsColor,
         ra,
         dec,
-        400,
+        size,
         profile.stretch,
         profile.cutMinPct,
         profile.cutMaxPct,
-        q,
+        quality,
       )
     }
-    return getImageUrl(e.url)
+    // RGB non-HiPS-color: /pipeline/merge-rgb?size=N → substitute with our size.
+    const base = getImageUrl(e.url)
+    return base.replace(/size=\d+/, `size=${size}`)
   }
   if (ra !== undefined && dec !== undefined && e.kind === 'band') {
     const hips = getHipsId(e.survey, e.item.band || '')
     if (hips) {
-      // R6.30: use per-tile quality (allows forceStd per band)
       return hipsCutoutUrl(
         hips,
         ra,
         dec,
-        400,
+        size,
         profile.stretch,
         profile.cutMinPct,
         profile.cutMaxPct,
@@ -423,8 +417,25 @@ function thumbUrl(
   const fp = e.item.fits_path || e.item.fits_db_path || ''
   const fn = fp.replace('/static-files/fits/', '')
   return getImageUrl(
-    `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${THUMB}`,
+    `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${size}`,
   )
+}
+
+// R6.61.b: thin wrapper — picks size (400 for HiPS, THUMB=100 for FITS fallback)
+// then delegates to buildImageUrl. The factory guarantees thumb/big URLs differ
+// ONLY in the size param (verified by vitest test).
+function thumbUrl(
+  e: OrderedEntry,
+  ra?: number,
+  dec?: number,
+  contrastAdjust?: Record<string, number>,
+  quality: 'standard' | 'high' = 'standard',
+): string {
+  const hipsBased =
+    (e.kind === 'rgb' && !!e.hipsColor) ||
+    (e.kind === 'band' && !!getHipsId(e.survey, e.item.band || ''))
+  const size = hipsBased ? THUMB_HIPS_SIZE : THUMB
+  return buildImageUrl(e, size, ra, dec, contrastAdjust, quality)
 }
 
 // R6.16: per-survey LARGE_SIZE. Each survey has its own sweet spot:
@@ -447,8 +458,9 @@ const LARGE_SIZE_BY_SURVEY: Record<string, number> = {
   Planck: 400,
 }
 const LARGE_SIZE_DEFAULT = 400
-// R6.29c: takes contrastAdjust state as 4th arg so RGB composite can react to slider.
-// R6.30: takes quality param for per-tile Hi-Q override.
+// R6.61.b: thin wrapper — uses per-survey LARGE_SIZE. RGB HiPS uses
+// per-survey getHipsQuality (R6.28 design); band/HiPS uses caller quality.
+// Delegates to buildImageUrl for the actual URL construction.
 function largeImageUrl(
   e: OrderedEntry,
   ra?: number,
@@ -456,92 +468,10 @@ function largeImageUrl(
   contrastAdjust?: Record<string, number>,
   quality: 'standard' | 'high' = 'standard',
 ): string {
-  // R6.27i.d: per-survey DS9 pixel-level profile (stretch + cut).
-  const profile = HIPS_PROFILE[e.survey] || { stretch: 'asinh' }
-
-  const largeSize = LARGE_SIZE_BY_SURVEY[e.survey] || LARGE_SIZE_DEFAULT
-  if (e.kind === 'rgb') {
-    // R6.16: RGB composites with a HiPS color survey (e.g. 2MASS) use
-    // the tile-seamless HiPS cutout instead of local merge-rgb stitching.
-    if (e.hipsColor && ra !== undefined && dec !== undefined) {
-      // R6.28: per-channel Hi-Q routing for big viewer (matches thumbUrl).
-      const q = getHipsQuality(e.hipsColor)
-      if (q === 'high' && e.rgbChannels) {
-        // R6.29c: apply per-channel contrast slider values to cuts.
-        // RGB composite now reacts to slider drag on its component bands.
-        const rBand = hipsBandName(e.rgbChannels.r)
-        const gBand = hipsBandName(e.rgbChannels.g)
-        const bBand = hipsBandName(e.rgbChannels.b)
-        const defaultLow = profile.cutMinPct ?? 0.5
-        const defaultHigh = profile.cutMaxPct ?? 99.5
-        const rCuts = contrastToCuts(
-          contrastAdjust?.[rBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const gCuts = contrastToCuts(
-          contrastAdjust?.[gBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const bCuts = contrastToCuts(
-          contrastAdjust?.[bBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const params = new URLSearchParams({
-          mode: 'hips',
-          r_hips: e.rgbChannels.r,
-          g_hips: e.rgbChannels.g,
-          b_hips: e.rgbChannels.b,
-          ra: String(ra),
-          dec: String(dec),
-          size: String(largeSize),
-          r_stretch: profile.stretch,
-          g_stretch: profile.stretch,
-          b_stretch: profile.stretch,
-          r_q_low: String(rCuts.qLow),
-          g_q_low: String(gCuts.qLow),
-          b_q_low: String(bCuts.qLow),
-          r_q_high: String(rCuts.qHigh),
-          g_q_high: String(gCuts.qHigh),
-          b_q_high: String(bCuts.qHigh),
-        })
-        return `/pipeline/merge-rgb?${params.toString()}`
-      }
-      return hipsCutoutUrl(
-        e.hipsColor,
-        ra,
-        dec,
-        largeSize,
-        profile.stretch,
-        profile.cutMinPct,
-        profile.cutMaxPct,
-        q,
-      )
-    }
-    // /pipeline/merge-rgb?size=512 → ?size=largeSize for the big viewer.
-    return getImageUrl(e.url).replace(/size=\d+/, `size=${largeSize}`)
-  }
-  if (ra !== undefined && dec !== undefined && e.kind === 'band') {
-    const hips = getHipsId(e.survey, e.item.band || '')
-    if (hips) {
-      return hipsCutoutUrl(
-        hips,
-        ra,
-        dec,
-        largeSize,
-        profile.stretch,
-        profile.cutMinPct,
-        profile.cutMaxPct,
-        quality,
-      )
-    }
-  }
-  // No HiPS — render from FITS at per-survey size.
-  const fp = e.item.fits_path || e.item.fits_db_path || ''
-  const fn = fp.replace('/static-files/fits/', '')
-  return `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${largeSize}`
+  const size = LARGE_SIZE_BY_SURVEY[e.survey] || LARGE_SIZE_DEFAULT
+  // R6.28: RGB HiPS uses per-survey Hi-Q (e.g. 2MASS=high); otherwise caller quality.
+  const q = e.kind === 'rgb' && e.hipsColor ? getHipsQuality(e.hipsColor) : quality
+  return buildImageUrl(e, size, ra, dec, contrastAdjust, q)
 }
 
 // R6.27k: Image quality toggle. Two-state pill button.

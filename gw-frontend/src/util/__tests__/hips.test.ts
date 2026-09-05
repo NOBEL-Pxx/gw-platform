@@ -1,10 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import {
-  buildHipsUrl,
-  clearHipsCache,
-  fetchHipsTile,
-  preconnectHipsEndpoints,
-} from '../hips'
+import { buildHipsUrl, clearHipsCache, fetchHipsTile } from '../hips'
+// preconnectHipsEndpoints is imported dynamically in R6.61.a preconnect tests
+// (vi.resetModules + await import) to avoid module-level _preconnectFired pollution.
 
 describe('hips utility', () => {
   const originalFetch = globalThis.fetch
