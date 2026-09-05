@@ -34,8 +34,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # gw-frontend is a subproject with its own .git, but we treat it as a
-          # regular directory from CI's perspective (no submodules, no LFS).
+          # R6.58: gw-frontend is now a git submodule pointing to
+          # GravitationalWaveTeam/gravitationalwave-frontend. recursive clone
+          # fetches the actual source so npm ci finds package.json.
+          submodules: recursive
 
       - name: Setup Node 20
         uses: actions/setup-node@v4
