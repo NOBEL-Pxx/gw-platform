@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { preloadImages, preloadFits, PreloadTracker } from '../preload'
+import { preloadImages, preloadFits, PreloadTracker, timeoutForUrl } from '../preload'
 
 // Mock Image constructor so we can deterministically trigger onload/onerror.
 // The preload utility stores handlers as img.onload / img.onerror so we
@@ -229,6 +229,27 @@ describe('preload utility', () => {
       t.complete('b')
       expect(t.pendingCount).toBe(0)
       expect(t.cachedCount).toBe(2)
+    })
+  })
+
+describe('timeoutForUrl', () => {
+    it('returns 10s for /pipeline/hips-float URLs (Hi-Q mode)', () => {
+      // v8 branch coverage: true-branch of the `||` for /pipeline/hips-float.
+      expect(timeoutForUrl('http://x/pipeline/hips-float?fov=2&object=test')).toBe(10000)
+    })
+
+    it('returns 10s for /pipeline/merge-rgb URLs (Hi-Q mode)', () => {
+      // v8 branch coverage: true-branch of the `||` for /pipeline/merge-rgb.
+      expect(timeoutForUrl('http://x/pipeline/merge-rgb?r_file=a&g_file=b&b_file=c')).toBe(10000)
+    })
+
+    it('returns 3s for CDS direct JPG URLs (Std mode)', () => {
+      // v8 branch coverage: false-branch (both includes() return false).
+      expect(timeoutForUrl('http://alasky.unistra.fr/DSS2/Norder3.jpg')).toBe(3000)
+    })
+
+    it('returns 3s for empty string', () => {
+      expect(timeoutForUrl('')).toBe(3000)
     })
   })
 

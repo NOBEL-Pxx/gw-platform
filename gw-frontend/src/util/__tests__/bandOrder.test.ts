@@ -508,6 +508,110 @@ describe('bandOrder utility', () => {
     })
   })
 
+it('two unknown surveys use localeCompare tiebreaker (rank 99 vs 99)', () => {
+      // v8 branch coverage: `surveyRank - surveyRank || localeCompare` requires
+      // both unknowns to fire the tiebreaker branch.
+      const items = [
+        makeItem({
+          id: 'b',
+          telescope: 'ZetaUnknown',
+          band: 'z1',
+          fits_path: '/z1.fits',
+        }),
+        makeItem({
+          id: 'a',
+          telescope: 'AlphaUnknown',
+          band: 'a1',
+          fits_path: '/a1.fits',
+        }),
+      ]
+      const r = buildOrderedEntries(items)
+      // Both rank 99, localeCompare sorts: Alpha < Zeta
+      expect((r[0] as { survey: string }).survey).toBe('AlphaUnknown')
+      expect((r[1] as { survey: string }).survey).toBe('ZetaUnknown')
+    })
+
+    it('bandRank returns 99 for unknown band within known survey (LEGACY u)', () => {
+      // v8 branch coverage: bandRank truthy fallback `return 99` when band not found.
+      const items = [
+        makeItem({
+          id: 'g',
+          telescope: 'LEGACY',
+          band: 'g',
+          fits_path: '/g.fits',
+        }),
+        makeItem({
+          id: 'u',
+          telescope: 'LEGACY',
+          band: 'u', // not in BAND_ORDER.LEGACY
+          fits_path: '/u.fits',
+        }),
+      ]
+      const r = buildOrderedEntries(items)
+      const bands = r.map((e) => (e as { item: GravitationalWaveItem }).item.band)
+      expect(bands).toEqual(['g', 'u'])
+    })
+
+    it('bandRank returns 99 for unknown survey (BAND_ORDER lookup miss)', () => {
+      // v8 branch coverage: bandRank `if (!order) return 99` fallback.
+      const items = [
+        makeItem({
+          id: 'x',
+          telescope: 'BrandNewSurvey',
+          band: 'foo',
+          fits_path: '/x.fits',
+        }),
+      ]
+      const r = buildOrderedEntries(items)
+      expect(r).toHaveLength(1)
+    })
+
+    it('bands with same rank use localeCompare tiebreaker', () => {
+      // v8 branch coverage: `(bandRank diff) || (a.band || '').localeCompare(b.band || '')`.
+      // Two bands both unknown within an unknown survey → both rank 99 → localeCompare.
+      const items = [
+        makeItem({
+          id: 'b',
+          telescope: 'CustomSurvey',
+          band: 'beta',
+          fits_path: '/b.fits',
+        }),
+        makeItem({
+          id: 'a',
+          telescope: 'CustomSurvey',
+          band: 'alpha',
+          fits_path: '/a.fits',
+        }),
+      ]
+      const r = buildOrderedEntries(items)
+      const bands = r.map((e) => (e as { item: GravitationalWaveItem }).item.band)
+      expect(bands).toEqual(['alpha', 'beta'])
+    })
+
+    it('filters items where both fits_path and fits_db_path are empty (|| false branch)', () => {
+      // v8 branch coverage: `it.fits_path || it.fits_db_path` — items with both
+      // empty are filtered out (truthy check on the second operand).
+      const items = [
+        makeItem({
+          id: 'no',
+          telescope: 'DSS2',
+          band: 'DSS2-Blue',
+          fits_path: '',
+          fits_db_path: '',
+        }),
+        makeItem({
+          id: 'yes',
+          telescope: 'DSS2',
+          band: 'DSS2-Red',
+          fits_path: '/yes.fits',
+          fits_db_path: '',
+        }),
+      ]
+      const r = buildOrderedEntries(items)
+      expect(r).toHaveLength(1)
+      expect((r[0] as { item: GravitationalWaveItem }).item.id).toBe('yes')
+    })
+
   describe('getHipsId', () => {
     it('maps DSS2-Blue to P/DSS2/blue', () => {
       expect(getHipsId('DSS2', 'DSS2-Blue')).toBe('P/DSS2/blue')

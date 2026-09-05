@@ -14,6 +14,7 @@ version-snapshots/
 # Build artifacts
 gw-frontend/node_modules/
 gw-frontend/dist/
+gw-frontend/coverage/
 gw-frontend/build/
 gw-backend/**/target/
 gw-backend/**/build/

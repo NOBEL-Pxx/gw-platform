@@ -48,8 +48,10 @@ const HI_Q_URL_TIMEOUT_MS = 10000
  * R6.29b: Determine per-URL timeout based on URL pattern.
  * Hi-Q URLs route through /pipeline/ (slow FITS pipeline).
  * Std URLs hit CDS directly (fast jpg).
+ *
+ * Exported for testing (v8 branch coverage requires direct calls).
  */
-function timeoutForUrl(url: string): number {
+export function timeoutForUrl(url: string): number {
   if (
     url.includes('/pipeline/hips-float') ||
     url.includes('/pipeline/merge-rgb')

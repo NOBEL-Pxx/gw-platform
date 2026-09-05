@@ -18,10 +18,13 @@ export default defineConfig({
         // bandOrder.ts (81.6%) + preload.ts (83.33%) ternary edges uncovered.
         // Threshold must be <= measured (vitest uses >= check, 84.96 fails 85).
         // Defer real test additions to R7.
+        // R6.59 (was R7 ladder): +5 bandOrder +4 preload branch tests = 110 tests.
+        // Branches 84.96 -> 90.22%. Bump threshold 84 -> 89 (1.22% buffer).
+        // Dead defensive branches marked `v8 ignore next` in bandOrder.ts.
         lines: 95,
         functions: 95,
         statements: 95,
-        branches: 84,
+        branches: 89,
       },
     },
   },

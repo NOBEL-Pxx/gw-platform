@@ -332,6 +332,8 @@ export function buildOrderedEntries(
         kind: 'rgb',
         survey,
         url: '',
+        // v8 ignore next -- SURVEY_LABEL always has '2MASS' here (we entered
+        // the 2MASS-specific branch above); `|| survey` fallback is dead code.
         label: `${SURVEY_LABEL[survey] || survey} RGB`,
         hipsColor: 'P/2MASS/color',
         // R6.28: per-channel HiPS IDs for Hi-Q mode backend routing
@@ -343,6 +345,9 @@ export function buildOrderedEntries(
     if (url) {
       // R6.28: per-channel HiPS IDs for Hi-Q mode. Maps band letter -> HiPS 'survey/band' string.
       const ch = RGB_PRESETS[survey]
+      // v8 ignore next -- we only enter this block when buildMergeUrl returned
+      // a URL, which requires RGB_PRESETS[survey] to be defined. So `ch` is
+      // always truthy here; the `: undefined` fallback is defensive dead code.
       const rgbChannels = ch
         ? {
             r: `${survey}/${ch.r}`,
@@ -354,6 +359,8 @@ export function buildOrderedEntries(
         kind: 'rgb',
         survey,
         url,
+        // v8 ignore next -- same defensive pattern as 2MASS branch above;
+        // every survey with RGB_PRESETS entry is also in SURVEY_LABEL.
         label: `${SURVEY_LABEL[survey] || survey} RGB`,
         rgbChannels,
       })
