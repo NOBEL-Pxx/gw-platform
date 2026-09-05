@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave Platform — Production Override (v4.16)
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file removes ALL dev port exposures and enforces production security:
+#   - SKIP_SEED_DATA=true: prevents demo data insertion in MongoDB
+#   - Stricter rate limiting (30 req/min instead of 120)
+#   - ES production config: TLS + audit logging (see docs/es-auth-config-v4.16.md)
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  mongodb:
+    ports: []  # No external access — gw-db network only
+    environment:
+      # v4.16: Skip demo seed data in production
+      - SKIP_SEED_DATA=true
+
+  elasticsearch:
+    ports: []  # No external access — gw-db network only
+    # v4.16: ES TLS + audit logging — uncomment after generating certs
+    # See docs/es-auth-config-v4.16.md for one-click setup
+    # environment:
+    #   - xpack.security.transport.ssl.enabled=true
+    #   - xpack.security.http.ssl.enabled=true
+    #   - xpack.security.audit.enabled=true
+
+  gw-backend:
+    ports: []  # No external access — gw-net network only (proxied by nginx)
+    environment:
+      # v4.16: Stricter rate limiting for production
+      - rate.limit.capacity=30
+      - rate.limit.refill-minutes=1
+
+  gw-pipeline:
+    ports: []  # No external access — gw-net network only (proxied by nginx)
+
+  gw-mcp-server:
+    ports: []  # No external access — gw-net network only
+
+  gw-firefly:
+    ports: []  # No external access — gw-net network only (proxied by nginx)
+
+  gw-frontend:
+    # Keep HTTP/HTTPS ports — these are the ONLY externally accessible ports
+    ports:
+      - "6001:80"
+      - "6002:443"

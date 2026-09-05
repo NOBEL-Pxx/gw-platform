@@ -1,0 +1,73 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave — 之江实验室 ops-astronomy-03 生产覆盖配置 (v4.31)
+# 用法: docker compose -f docker-compose.yml -f docker-compose.zjlab.yml up -d
+#
+# Pre-flight 确认 (2026-07-29):
+#   - nvidia-container-toolkit 1.13.4 ✅
+#   - Docker Default Runtime: nvidia ✅
+#   - 2× Tesla V100 32GB (空闲) ✅
+#   - 206GB 可用磁盘 ✅
+#   - 端口 6001/6002 无冲突 ✅
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── 数据层：仅 gw-db 网段，禁止外部端口暴露 ──
+  mongodb:
+    ports: []  # 清除 docker-compose.yml 中的 27017 映射
+    environment:
+      SKIP_SEED_DATA: "true"  # 生产模式：不插入演示种子数据
+    deploy:
+      resources:
+        limits: { cpus: '4.0', memory: 4G }
+        reservations: { cpus: '1.0', memory: 1G }
+
+  elasticsearch:
+    ports: []  # 清除 9200 映射
+    deploy:
+      resources:
+        limits: { cpus: '4.0', memory: 4G }
+        reservations: { cpus: '1.0', memory: 1G }
+
+  # ── 应用层：仅 gw-net 内部通信，由 gw-frontend nginx 反代 ──
+  gw-firefly:
+    ports: []  # 清除 8080 映射 → nginx 反代 /firefly/
+
+  gw-backend:
+    ports: []  # 清除 8093 映射 → nginx 反代 /api/
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      rate.limit.capacity: 30
+      rate.limit.refill-minutes: 1
+      JAVA_OPTS: "-Xms1g -Xmx3g"
+    deploy:
+      resources:
+        limits: { cpus: '4.0', memory: 4G }
+        reservations: { cpus: '1.0', memory: 1G }
+
+  gw-pipeline:
+    ports: []  # 清除 8200 映射 → nginx 反代 /pipeline/
+    # v4.31: GPU 加速 — nvidia 已是 Docker 默认运行时
+    # Phase 1: onnxruntime 1.20.1 (CPU) — GPU 设备可见但未使用
+    # Phase 2: 升级 onnxruntime-gpu + nvidia/cuda 基础镜像 → GPU 推理
+    deploy:
+      resources:
+        limits: { cpus: '8.0', memory: 8G }
+        reservations: { cpus: '2.0', memory: 2G }
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+    environment:
+      GW_EXCLUDE_GPL_MODELS: "false"  # 内部科研使用，保留 GPL 模型
+
+  gw-mcp-server:
+    ports: []  # 清除 8100 映射
+
+  # ── 前端层：唯一对外暴露的端口 ──
+  gw-frontend:
+    build:
+      args:
+        APP_RUN_ENV: prod  # 覆盖 dev → 生产构建 (tsc -b && vite build)
+    ports:
+      - "6001:80"
+      - "6002:443"

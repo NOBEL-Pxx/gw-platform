@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GravitationalWave Platform — Monitoring Stack (v4.37)
+# Optional Prometheus + Grafana for AI metrics observability.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+#
+# This adds:
+#   - Prometheus on port 9090 (scrapes gw-pipeline:8200/metrics every 15s)
+#   - Grafana on port 3000 (pre-configured AI dashboard)
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: gw-prometheus
+    volumes:
+      - ./gw-pipeline/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker-data/prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "65534:65534"  # nobody
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: gw-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: ""
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+    volumes:
+      - ./docker-data/grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false
+    user: "472:472"  # grafana
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-net
