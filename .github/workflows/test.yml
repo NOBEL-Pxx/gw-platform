@@ -1,0 +1,70 @@
+name: gw-frontend tests
+
+# R6.55: Add vitest to CI for gw-frontend.
+# Runs on every push + PR that touches gw-frontend/**.
+# 34 tests, ~10s. Node 20 LTS (matches dockerfile).
+
+on:
+  push:
+    branches: [main, master, r6.*]
+    paths:
+      - 'gw-frontend/**'
+      - '.github/workflows/test.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'gw-frontend/**'
+      - '.github/workflows/test.yml'
+
+# Cancel in-progress runs for the same branch (don't waste CI minutes).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vitest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    defaults:
+      run:
+        working-directory: gw-frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # gw-frontend is a subproject with its own .git, but we treat it as a
+          # regular directory from CI's perspective (no submodules, no LFS).
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: gw-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+        # --no-audit skips the 13 vulnerabilities warning (already documented)
+        # --no-fund skips the "please donate to npm" message
+
+      - name: TypeScript typecheck
+        run: npx tsc -b --noEmit
+        # R6.55: catches type regressions before tests run
+
+      - name: Run vitest
+        run: npm test -- --run --reporter=verbose
+
+      - name: Coverage report
+        # Always emit coverage so PR reviewers see diff in coverage %.
+        # Threshold check happens in `vitest.config.ts`.
+        run: npm run test:coverage -- --run --reporter=default
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: gw-frontend/coverage/
+          retention-days: 14
