@@ -118,6 +118,47 @@ services:
 
   # ── APPLICATION TIER (gw-net: can reach frontend, can be reached by backend) ──
 
+
+  # ── R6.54: Redis (distributed rate limiting backend) ─────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: gw-redis
+    # v4.37: no exposed port in dev override (docker-compose.dev.yml maps it).
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - ./docker-data/redis-data:/data
+    restart: unless-stopped
+    # v4.37: Security hardening (redis official image runs as uid 999 by default)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gw-db
+      - gw-net
   gw-firefly:
     image: ipac/firefly:latest
     container_name: gw-firefly
@@ -166,7 +207,10 @@ services:
     ports:
       - "8093:8093"
     environment:
-      SPRING_PROFILES_ACTIVE: local
+      SPRING_PROFILES_ACTIVE: local,redis
+      RATE_LIMIT_REDIS_URI: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
       SPRING_DATA_MONGODB_HOST: mongodb
       SPRING_DATA_MONGODB_USERNAME: gw-app
       SPRING_DATA_MONGODB_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD must be set}
@@ -190,6 +234,8 @@ services:
       mongodb:
         condition: service_healthy
       elasticsearch:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     # v4.37: Security hardening — non-root gwuser in Dockerfile
