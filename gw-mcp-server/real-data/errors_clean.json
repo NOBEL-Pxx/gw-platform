@@ -1,0 +1,278 @@
+[
+  {
+    "id": "Jcqm15oBmW_rMGLCA01o",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_159.647_Dec_44.796_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      156.982523,
+      161.646518
+    ],
+    "decfield": [
+      43.394393,
+      46.610227
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "KMqm15oBmW_rMGLCC00z",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_153.000_Dec_51.836_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      149.911957,
+      155.317014
+    ],
+    "decfield": [
+      50.427054,
+      53.645683
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "K8qm15oBmW_rMGLCE00Z",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_158.600_Dec_47.945_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      155.766404,
+      160.725955
+    ],
+    "decfield": [
+      46.540663,
+      49.757676
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Lsqm15oBmW_rMGLCGk3_",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_162.070_Dec_36.609_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      159.733502,
+      163.823346
+    ],
+    "decfield": [
+      35.214633,
+      38.427803
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "NMqm15oBmW_rMGLCKk3K",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_162.422_Dec_36.609_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      160.085064,
+      164.174908
+    ],
+    "decfield": [
+      35.214633,
+      38.427803
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Osqm15oBmW_rMGLCOk21",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_159.562_Dec_44.994_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      156.887941,
+      161.569056
+    ],
+    "decfield": [
+      43.592074,
+      46.807979
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Pcqm15oBmW_rMGLCQk2b",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_162.070_Dec_35.136_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      159.779441,
+      163.788867
+    ],
+    "decfield": [
+      33.742627,
+      36.955365
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "QMqm15oBmW_rMGLCSk2B",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_162.246_Dec_36.795_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      159.903237,
+      164.003665
+    ],
+    "decfield": [
+      35.400593,
+      38.613818
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "N8qm15oBmW_rMGLCMk3P",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_152.051_Dec_41.014_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      149.554589,
+      153.923444
+    ],
+    "decfield": [
+      39.616334,
+      42.830874
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Q8qm15oBmW_rMGLCUk1y",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_127.381_Dec_54.916_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      124.044865,
+      129.884255
+    ],
+    "decfield": [
+      53.50282,
+      56.72288
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Mcqm15oBmW_rMGLCIk3k",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_158.906_Dec_38.874_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      156.491925,
+      160.717463
+    ],
+    "decfield": [
+      37.477205,
+      40.691063
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  },
+  {
+    "id": "Rsqm15oBmW_rMGLCWk1l",
+    "error_id": "AliCPT_Abnormal_2025-04-15_14:36:04.861_2025-04-15_15:36:32.201_RA_162.246_Dec_36.424_FOV_3.435_Width_15_Height_15",
+    "telescope": "AliCPT-1",
+    "band": "150.0GHz",
+    "rafield": [
+      159.915259,
+      163.994642
+    ],
+    "decfield": [
+      35.029121,
+      38.242235
+    ],
+    "fov": 3.435,
+    "width": 15,
+    "height": 15,
+    "start_date": "2025-04-15 14:36:04.861",
+    "end_date": "2025-04-15 15:36:32.201",
+    "anomaly_type": [
+      "DEAD_PIX",
+      "RFI"
+    ]
+  }
+]

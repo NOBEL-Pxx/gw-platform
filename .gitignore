@@ -56,3 +56,28 @@ docker-cp-scratch/
 
 # Version-snapshot backup (replaced by git tag — R6.22)
 version-snapshots/
+
+# ─── R6.60.b untracked cleanup (2026-09-06) ────────────────────────────
+# Orphan artifacts (build artifacts / test data / cache)
+docker-images/             # 4 .tar files (~GB), not in version control
+real-data/                 # test data JSON (no need to commit)
+sample_data/               # local dev fixtures (application-local.properties, fits, image)
+npm-cache/                 # npm cache dir (may contain private keys, never commit)
+
+# Build artifacts (generalized from gw-backend/**/target)
+**/target/
+**/build/
+**/__pycache__/
+**/*.pyc
+**/*.class
+**/dist/
+**/node_modules/
+**/.venv/
+**/venv/
+
+# ONNX model binaries (~60MB ea, downloaded by gw-pipeline/scripts/download_models.py)
+gw-pipeline/models/*.onnx
+# Keep .json configs (scalers/architectures) but not the binary weights
+
+# Orphan submodule (R6.60.b留待: should be re-established as proper submodule or deleted)
+# gw-backend/  # uncomment to ignore — for now, leave as-is for review

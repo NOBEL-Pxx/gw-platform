@@ -1,0 +1,27 @@
+# GravitationalWave Platform — Prometheus Config v4.37
+# Scrapes AI metrics from gw-pipeline /pipeline/metrics endpoint.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: 'gw-pipeline'
+    metrics_path: '/pipeline/metrics'
+    static_configs:
+      - targets: ['gw-pipeline:8200']
+        labels:
+          service: 'gw-pipeline'
+          env: '${GW_ENV:-production}'
+
+  - job_name: 'gw-pipeline-health'
+    metrics_path: '/health'
+    static_configs:
+      - targets: ['gw-pipeline:8200']
+        labels:
+          service: 'gw-pipeline-health'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

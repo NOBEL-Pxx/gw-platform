@@ -1,0 +1,129 @@
+name: font-subset
+
+# R6.46: CI gate (matrix 3 OS x 4 Python) that fails if per-page font subsets are stale.
+# Triggered on PRs that touch src/ or public/fonts/.
+# Failure path: developer edits src/ -> new chars appear -> subsets stale ->
+#   CI fails -> developer runs `npm run subset-fonts` and commits -> CI green.
+# Also regenerates subsets weekly (Sunday) to surface drift from upstream
+# Inter Variable releases.
+# R6.45: posts Slack notification via webhook (env: SLACK_WEBHOOK_URL).
+
+on:
+  pull_request:
+    paths:
+      - "gw-frontend/src/**"
+      - "gw-frontend/public/fonts/**"
+      - "gw-frontend/scripts/subset-fonts.py"
+  push:
+    branches: [main]
+    paths:
+      - "gw-frontend/src/**"
+  schedule:
+    - cron: "0 3 * * 0"  # Sunday 03:00 UTC
+
+jobs:
+  verify-font-subset:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: gw-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install fontTools
+        run: pip install fonttools brotli
+
+      - name: Print matrix info
+        run: |
+          echo "OS: ${{ matrix.os }}"
+          echo "Python: ${{ matrix.python-version }}"
+
+      - name: Setup tiniFont cache key prefix (matrix-safe)
+        run: echo "KEY_PREFIX=font-subsets-${{ matrix.os }}-${{ matrix.python-version }}" >> $GITHUB_ENV
+
+      - name: Cache font subsets
+        uses: actions/cache@v4
+        with:
+          path: gw-frontend/public/fonts
+          key: font-subsets-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('gw-frontend/public/fonts/inter-var.woff2') }}
+          restore-keys: |
+            font-subsets-${{ matrix.os }}-${{ matrix.python-version }}-
+            font-subsets-
+
+      - name: Verify per-page subsets are up to date
+        id: verify
+        run: |
+          echo "=== Pre-existing subsets ==="
+          ls -la public/fonts/inter-*.woff2 2>&1 || true
+          echo "=== Running subset-fonts --verify ==="
+          python scripts/subset-fonts.py --verify 2>&1 | tee verify.log
+          echo "EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+        env:
+          PYTHONUNBUFFERED: "1"
+
+
+  # R6.46: Consolidated PR-comment + Slack notification (one post, not per-matrix-cell)
+  notify-pr:
+    needs: verify-font-subset
+    if: failure() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post PR comment on stale subsets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const msg = [
+              "## Font subsets are stale",
+              "",
+              "Source code has new chars that aren't in `public/fonts/*.woff2`.",
+              "Verified across 12 cells (3 OS x 4 Python). One or more cells failed.",
+              "",
+              "**Fix:**",
+              "```bash",
+              "cd gw-frontend",
+              "npm run subset-fonts",
+              "git add public/fonts/",
+              "git commit -m 'chore: regenerate per-page font subsets'",
+              "git push",
+              "```",
+              "",
+              "**Why this matters (R6.43-R6.45)**: per-page font subsets trim 50-51KB per",
+              "page (vs 71.3KB shared latin). Stale subsets include unused chars.",
+            ].join("\n");
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: msg,
+            });
+
+      - name: Notify Slack on stale subsets
+        if: env.SLACK_WEBHOOK_URL != ''
+        shell: bash
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.number }}
+          PR_BRANCH: ${{ github.head_ref }}
+          REPO_NAME: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": ":warning: Font subsets are stale in $REPO_NAME (12-cell matrix failed)\n- PR: #$PR_NUMBER by @$PR_AUTHOR\n- Branch: $PR_BRANCH\n- Commit: \`$COMMIT_SHA\`\nRun \`cd gw-frontend && npm run subset-fonts && git add public/fonts/ && git commit -m 'chore: regenerate font subsets'\` to fix."
+          }
+          EOF
+          )
+          curl -sS -X POST -H 'Content-Type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL" || echo "slack post failed (non-fatal)"
+

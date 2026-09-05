@@ -1,0 +1,25 @@
+# R6.40: Lighthouse CI - perf budget enforcement
+name: Lighthouse CI
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deps
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v11
+        with:
+          configPath: '.lighthouserc.json'
+          uploadArtifacts: true

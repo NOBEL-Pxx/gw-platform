@@ -1,0 +1,106 @@
+# GravitationalWave Platform — DL Model Licensing (v4.25)
+
+## Primary License: MIT
+
+The GravitationalWave platform pipeline code, including the lightweight classifiers
+(galaxy morphology, source type, anomaly heuristic) and the CNN autoencoder, is
+licensed under the **MIT License**.
+
+Copyright (c) 2024-2026 GravitationalWave Platform Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Third-Party Component: Zoobot Encoder (GPL-3.0)
+
+**WARNING — GPL-3.0 "Copyleft" Component**
+
+The file `models/zoobot_encoder_greyscale.onnx` (57.1 MB) contains pretrained
+weights derived from Zoobot (https://github.com/mwalmsley/zoobot), which is
+licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+### GPL-3.0 Compliance Impact
+
+The GPL-3.0 is a strong copyleft license. If you **distribute** (as defined
+by the GPL) any Docker image or software package containing this file, you
+MUST also make the **complete corresponding source code** of the entire
+platform available under GPL-3.0-compatible terms.
+
+### What "Distribution" Means
+
+- ✅ **Internal use only** (private servers, local Docker instances accessible
+  only by your organization) — does NOT trigger GPL source disclosure.
+- ⚠️ **Docker image pushed to a public registry** (Docker Hub, GitHub
+  Container Registry, etc.) — TRIGGERS GPL source disclosure obligation.
+- ⚠️ **Deployment to a public-facing server** accessible by users outside
+  your organization — may trigger GPL obligations depending on jurisdiction.
+  Consult legal counsel.
+- ⚠️ **Sharing Docker images with external collaborators** — TRIGGERS GPL
+  source disclosure obligation.
+
+### Recommended Actions
+
+1. **Immediate (no cost)**: Add a build-time flag to optionally exclude
+   `zoobot_encoder_greyscale.onnx` from the Docker image. When excluded,
+   the lightweight classifier still works (at reduced accuracy ~40-60%).
+
+2. **Short-term**: Contact Zoobot author Mike Walmsley for a written
+   licensing exception for academic/non-commercial use.
+
+3. **Medium-term**: Train a replacement encoder on public-domain survey data
+   (e.g., DECaLS DR9) under MIT or Apache 2.0 license.
+
+4. **If distributing publicly**: Prepare the complete platform source code
+   for GPL-3.0 release, or remove the Zoobot-derived weights before
+   distribution.
+
+### Current Status (2026-07-26)
+
+- [ ] GPL compliance plan not formalized
+- [ ] No written exemption from Zoobot author
+- [ ] No build flag to exclude GPL model
+- [ ] No replacement encoder trained under permissive license
+- [x] License documented in model metadata
+- [x] License noted in dl_inference.py source code
+
+---
+
+## Model License Inventory
+
+| Model File | Size | License | Source | Compliance Risk |
+|------------|------|---------|--------|-----------------|
+| `zoobot_encoder_greyscale.onnx` | 57.1 MB | **GPL-3.0** | Zoobot pretrained (mwalmsley) | 🔴 HIGH — copyleft |
+| `source_classifier.onnx` | 4.8 KB | MIT | Trained on synthetic data | 🟢 NONE |
+| `anomaly_autoencoder.onnx` | 475.9 KB | MIT | Trained on AliCPT-1 data | 🟢 NONE |
+| `morphology_archetypes.json` | ~120 KB | CC0 | Generated from DECaLS DR9 survey | 🟢 NONE |
+| `source_classifier_scaler.json` | ~1 KB | MIT | Feature normalization params | 🟢 NONE |
+| `anomaly_autoencoder_scaler.json` | ~1 KB | MIT | Feature normalization params | 🟢 NONE |
+
+### Training Data Provenance
+
+- **source_classifier.onnx**: Trained on 6,000 synthetic astronomy samples
+  (star/galaxy/quasar photometric profiles). No third-party survey data used.
+- **anomaly_autoencoder.onnx**: Trained on 180 AliCPT-1 FITS cutouts.
+  AliCPT-1 is the project's own data. No third-party copyright concerns.
+- **morphology_archetypes.json**: 640-D embeddings generated from DECaLS DR9
+  survey cutouts (public domain, no copyright restriction on derived features).
+- **zoobot_encoder_greyscale.onnx**: Pretrained by Mike Walmsley on Galaxy Zoo
+  DECaLS (GZ-DESI) dataset. The GZ-DESI labels are CC0; the model weights
+  are GPL-3.0 per the author's choice.
