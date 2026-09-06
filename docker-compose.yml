@@ -409,7 +409,11 @@ services:
       gw-firefly:
         condition: service_healthy
     restart: unless-stopped
-    # v4.37: Security hardening — nginx user + read-only rootfs
+    # v4.37 + R6.65: Security hardening, but read_only REMOVED for gw-frontend.
+    # Reason: read_only + tmpfs under docker compose v2.19.x is broken -
+    # the legacy Tmpfs API silently drops `:mode=1777` so any tmpfs is created
+    # as root:root 755. nginx user (uid 101) then can't write pid file or
+    # bind low ports cleanly. We keep the rest of v4.37 hardening.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -419,11 +423,7 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-    read_only: true
-    tmpfs:
-      - /var/cache/nginx:mode=1777
-      - /var/run:mode=1777
-      - /etc/nginx/conf.d:mode=1777
+      - DAC_OVERRIDE
     deploy:
       resources:
         limits:
@@ -443,9 +443,7 @@ services:
     # R6.27g.b: bind-mount build/ so vite rebuilds propagate without `docker compose build`
     # (npm install inside container is blocked by dead Clash proxy at 7890).
     # Image still has its baked-in build as fallback when host folder missing.
-    volumes:
-      - ./gw-frontend/build:/usr/share/nginx/html:ro
-      - ./gw-frontend/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  NETWORKS — segmented by security tier (v4.15)
