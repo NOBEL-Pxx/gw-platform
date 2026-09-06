@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -15,9 +16,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Default single-instance rate limiter backed by ConcurrentHashMap.
- * Activated when no other RateLimiter bean is present (e.g. Redis not configured).
+ * Activated when no Redis profile is active (mutually exclusive with RedisRateLimiter).
+ * R6.65: @Profile("!redis") prevents the bean-ambiguity that broke startup when
+ * both rate limiter implementations were loaded under SPRING_PROFILES_ACTIVE=local,redis.
  */
 @Component
+@Profile("!redis")
 public class InMemoryRateLimiter implements RateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryRateLimiter.class);
