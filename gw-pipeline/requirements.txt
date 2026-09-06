@@ -13,3 +13,4 @@ onnxruntime==1.20.1
 cryptography>=41.0.0
 # R6.52 #6: Watermark EXIF embedding for PDF (PNG tEXt via Pillow already covers PNG)
 PyMuPDF>=1.24.0
+

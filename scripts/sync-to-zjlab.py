@@ -157,17 +157,66 @@ def _rebuild_pipeline_remote(tg):
     print('[pipeline-rebuild] Done')
 
 
+def _pipeline_needs_source_rebuild(tg, sftp):
+    """R6.64: detect if local source differs from RUNNING CONTAINER source.
+
+    Compares per-file SHA256 between local gw-pipeline/src/pipeline and
+    /app/src/pipeline/ inside the running gw-pipeline container. The remote
+    host path can be stale if a rebuild was skipped earlier.
+
+    Returns (changed: bool, n_local_changed: int, n_container: int).
+    """
+    import hashlib as _hl
+    pipeline_dir = os.path.join(LOCAL_ROOT, 'gw-pipeline', 'src', 'pipeline')
+    agent_dir = os.path.join(pipeline_dir, 'agent')
+    local_files = {}
+    for d in (pipeline_dir, agent_dir):
+        if not os.path.isdir(d):
+            continue
+        for fname in os.listdir(d):
+            if fname.endswith('.py'):
+                lp = os.path.join(d, fname)
+                with open(lp, 'rb') as f:
+                    local_files[fname] = _hl.sha256(f.read()).hexdigest()
+    # Container SHA: sha256sum /app/src/pipeline/*.py via docker exec
+    container_files = {}
+    cmd = (
+        'docker exec gw-pipeline sha256sum '
+        '/app/src/pipeline/*.py /app/src/pipeline/agent/*.py 2>/dev/null'
+    )
+    si, so, se = tg.exec_command(cmd, timeout=30)
+    out = so.read().decode(errors='replace').strip()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            sha = parts[0]
+            p_full = parts[1]
+            base = os.path.basename(p_full)
+            if base.endswith('.py'):
+                container_files[base] = sha
+    changed = sum(1 for k, v in local_files.items() if container_files.get(k) != v)
+    return (changed > 0, changed, len(container_files))
+
+
 def sync_pipeline(tg, sftp):
-    # R6.52 hotfix: auto-rebuild gw-pipeline image when requirements.txt changes
+    # R6.64 patch: upload source BEFORE rebuild (read-only rootfs blocks docker cp).
+    # Old order: rebuild -> upload -> docker cp -> restart (broken: cp fails)
+    # New order: upload -> rebuild (build picks up fresh source) -> restart
+    # R6.64: ALL CHANGE DETECTION BEFORE UPLOAD (otherwise the source SHA
+    # comparison reads the just-uploaded files and returns no-changes).
     needs_rebuild, local_short, remote_short = _pipeline_needs_rebuild(tg)
+    src_changed, n_src_changed, n_remote = _pipeline_needs_source_rebuild(tg, sftp)
     if needs_rebuild:
         print('[pipeline] requirements.txt CHANGED (local={} remote={}) -> triggering rebuild'.format(
             local_short, remote_short))
-        _rebuild_pipeline_remote(tg)
+    elif src_changed:
+        print('[pipeline] source CHANGED ({} of {} files differ) -> triggering rebuild (read-only rootfs)'.format(
+            n_src_changed, n_remote))
+        needs_rebuild = True
     else:
-        print('[pipeline] requirements.txt unchanged (sha={}) - skipping rebuild'.format(local_short or remote_short))
+        print('[pipeline] requirements.txt + source unchanged - skipping rebuild')
 
-    print('[pipeline] Uploading...')
+    print('[pipeline] Uploading source FIRST (so build picks up new code)...')
     tg.exec_command('mkdir -p {}/gw-pipeline/src/pipeline/agent'.format(REMOTE_ROOT), timeout=5)
     time.sleep(1)
 
@@ -183,8 +232,8 @@ def sync_pipeline(tg, sftp):
             sftp.put(os.path.join(pipeline_dir, 'agent', fname),
                      '{}/gw-pipeline/src/pipeline/agent/{}'.format(REMOTE_ROOT, fname))
             count += 1
-    # R6.52 hotfix: also upload requirements.txt + Dockerfile + docs/changelog
-    # so docker compose build picks up new Python deps on the next rebuild.
+    # Also upload requirements.txt + Dockerfile so docker compose build
+    # picks up new Python deps on the next rebuild.
     gw_root = os.path.join(LOCAL_ROOT, 'gw-pipeline')
     for extra in ['requirements.txt', 'Dockerfile']:
         src_path = os.path.join(gw_root, extra)
@@ -193,6 +242,11 @@ def sync_pipeline(tg, sftp):
             count += 1
             print('[pipeline] uploaded {} ({} bytes)'.format(extra, os.path.getsize(src_path)))
     print('[pipeline] Uploaded {} files'.format(count))
+
+    if needs_rebuild:
+        _rebuild_pipeline_remote(tg)
+    else:
+        print('[pipeline] no changes detected - skipping rebuild')
 
     print('[pipeline] Deploying...')
     for fname in os.listdir(pipeline_dir):
