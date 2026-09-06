@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              http://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+    <!-- v4.12: Tiered mirror fallback — Maven Central primary, mirrors as backup.
+         Maven resolves mirrors in declaration order; first reachable wins. -->
+    <mirrors>
+        <!-- Tier 1: Maven Central directly (fastest when reachable) -->
+        <mirror>
+            <id>central</id>
+            <mirrorOf>central</mirrorOf>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </mirror>
+        <!-- Tier 2: Tencent Cloud mirror (low-latency within China) -->
+        <mirror>
+            <id>tencent</id>
+            <mirrorOf>central</mirrorOf>
+            <url>https://mirrors.cloud.tencent.com/nexus/repository/maven-public/</url>
+        </mirror>
+        <!-- Tier 3: Huawei Cloud mirror (fallback) -->
+        <mirror>
+            <id>huawei</id>
+            <mirrorOf>central</mirrorOf>
+            <url>https://repo.huaweicloud.com/repository/maven/</url>
+        </mirror>
+    </mirrors>
+
+    <!-- Build profiles: enable parallel downloads + retry -->
+    <profiles>
+        <profile>
+            <id>build</id>
+            <activation><activeByDefault>true</activeByDefault></activation>
+            <properties>
+                <maven.wagon.http.retryHandler.count>10</maven.wagon.http.retryHandler.count>
+                <maven.wagon.http.connectionTimeout>30000</maven.wagon.http.connectionTimeout>
+                <maven.wagon.http.readTimeout>120000</maven.wagon.http.readTimeout>
+                <maven.wagon.http.pool>true</maven.wagon.http.pool>
+            </properties>
+        </profile>
+    </profiles>
+</settings>

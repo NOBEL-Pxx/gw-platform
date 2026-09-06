@@ -1,0 +1,53 @@
+version: '3.8'  # 使用 Docker Compose 文件格式版本 3.8
+
+services:
+  gravitationalwave-backend-service:
+    image: cr.registry.res.cloud.zhejianglab.com/gravitationalwave/gravitational-wave-backend:v60_prod  # 指定镜像
+    container_name: gravitationalwave-backend-service  # 容器名称
+    ports:
+      - "8093:8093"  # 将容器的 8081 端口映射到主机的 8081 端口
+    environment:
+      - SPRING_PROFILES_ACTIVE=daily  # 可以根据需要设置环境变量
+      - SPRING_DATA_MONGODB_HOST=mongodb-service
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_USERNAME=admin
+      - SPRING_DATA_MONGODB_PASSWORD=${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
+      - SPRING_DATA_MONGODB_DATABASE=adcp
+      - SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE=admin
+      - SPRING_DATA_ELASTICSEARCH_REPOSITORIES_ENABLED=true
+      - SPRING_ELASTICSEARCH_URIS=${ES_URIS:?Set ES_URIS in .env}
+      - SPRING_ELASTICSEARCH_USERNAME=${ES_USERNAME:?Set ES_USERNAME in .env}
+      - SPRING_ELASTICSEARCH_PASSWD=${ES_PASSWORD:?Set ES_PASSWORD in .env}
+    restart: on-failure  # 如果容器退出，则自动重启
+    volumes:
+      #- /mnt/astro_platform/Ali_PW:/app/Ali_PW  # 挂载主机目录到容器
+      - /home/zjlab/test/data:/app/Ali_PW
+    networks:
+      - backend-net  # 指定网络（可选）
+
+  gravitationalwave-frontend-service:
+    image: cr.registry.res.cloud.zhejianglab.com/adcp/gravitationalwave-frontend:v7_prod
+    container_name: gravitationalwave-frontend-service
+    ports:
+      - "8091:80"
+    restart: on-failure  # 如果容器退出，则自动重启
+    networks:
+      - backend-net  # 指定网络（可选）
+
+  mongodb-service:
+    image: mongo:6.0.26
+    container_name: mongodb-service
+    ports:
+      - "30017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
+    volumes:
+      - /data/mongodb:/data/db
+    restart: on-failure
+    networks:
+      - backend-net
+
+networks:
+  backend-net:
+    driver: bridge  # 使用桥接网络

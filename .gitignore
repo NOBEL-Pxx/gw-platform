@@ -18,8 +18,6 @@ gw-frontend/coverage/
 gw-frontend/build/
 gw-backend/**/target/
 gw-backend/**/build/
-# R6.62: preserve nested gw-backend .git (it has its own history, R6.62+ commits there)
-gw-backend/.git/
 gw-pipeline/__pycache__/
 gw-pipeline/**/__pycache__/
 gw-pipeline/.venv/
