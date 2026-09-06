@@ -120,8 +120,16 @@ def register_routes(app):
         action: Optional[str] = Query(default=None, description="Filter by action type"),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=50, ge=1, le=200),
+        # R6.52 #1: full-text search + offset-based pagination
+        q: Optional[str] = Query(default=None, description="Full-text substring search across all string fields; returns match_field + highlight"),
+        offset: Optional[int] = Query(default=None, ge=0, description="Skip N entries; takes precedence over page"),
     ):
-        """Cross-source unified audit log search. Admin only."""
+        """Cross-source unified audit log search. Admin only.
+
+        R6.52 #1: q returns matching entries with match_field + highlight
+        (the value with **...** wrapping the matched substring). offset
+        enables infinite-scroll UIs.
+        """
         try:
             from .audit_mongo import unified_search
             result = await unified_search(
@@ -130,6 +138,8 @@ def register_routes(app):
                 action=action,
                 page=page,
                 page_size=page_size,
+                q=q,
+                offset=offset,
             )
             return result
         except ImportError:

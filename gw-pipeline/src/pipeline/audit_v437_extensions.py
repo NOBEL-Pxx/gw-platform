@@ -16,10 +16,18 @@ from typing import Optional, Dict, List
 
 async def unified_search(source: str = "all", user: str = None,
                          action: str = None, page: int = 1,
-                         page_size: int = 50) -> dict:
+                         page_size: int = 50, q: str = None,
+                         offset: int = None) -> dict:
     """Cross-source unified audit log search.
 
     Sources: llm (compliance_logs), mcp (mcp_audit), backend (backend_audit)
+
+    R6.52 #1 additions:
+      - q: full-text case-insensitive substring search across all string fields.
+            For each matching entry, returns match_field (which field matched)
+            and highlight (the value with **...** around the matched substring).
+      - offset: skip N entries (alternative to page-based pagination, useful
+               for incremental / infinite-scroll UIs).
     """
     from .audit_mongo import _get_mongo, _AUDIT_DB
     client, available = _get_mongo()
@@ -46,16 +54,45 @@ async def unified_search(source: str = "all", user: str = None,
         if action:
             filt["action"] = {"$regex": action, "$options": "i"}
 
+        # R6.52 #1: q = full-text across all string fields. Mongo side uses
+        # $regex (case-insensitive) on each string field via $or.
+        q_lower = (q or "").strip().lower()
+        if q_lower:
+            # Escape regex meta chars to prevent injection / ReDoS
+            import re as _re_q
+            q_pat = _re_q.escape(q_lower)
+            string_fields = [
+                "session_id", "user_id", "action", "endpoint", "method",
+                "tool_name", "user_role", "source", "message",
+                "arguments_summary", "result_summary",
+            ]
+            filt["$and"] = filt.get("$and", []) + [
+                {"$or": [{f: {"$regex": q_pat, "$options": "i"}} for f in string_fields]}
+            ]
+
+        # Pagination: offset takes precedence if provided, else page-based.
+        skip_n = offset if offset is not None else (page - 1) * page_size
+
         # Query each collection and merge
         all_entries = []
         for coll_name in collections:
             coll = db[coll_name]
-            cursor = coll.find(filt).sort("timestamp", -1).skip((page - 1) * page_size).limit(page_size)
+            cursor = coll.find(filt).sort("timestamp", -1).skip(skip_n).limit(page_size)
             async for doc in cursor:
                 doc["_id"] = str(doc["_id"])
                 doc["_source"] = coll_name
                 if isinstance(doc.get("timestamp"), datetime.datetime):
                     doc["timestamp"] = doc["timestamp"].isoformat() + "Z"
+
+                # R6.52 #1: compute match_field + highlight for q matches
+                if q_lower:
+                    mf, hv = _first_string_match(doc, q_lower)
+                    doc["match_field"] = mf
+                    doc["highlight"] = hv
+                else:
+                    doc["match_field"] = None
+                    doc["highlight"] = None
+
                 all_entries.append(doc)
 
         # Sort merged results by timestamp descending
@@ -67,11 +104,51 @@ async def unified_search(source: str = "all", user: str = None,
             "source_filter": source,
             "entries": all_entries[:page_size],
             "total": total,
-            "page": page,
+            "page": page if offset is None else (offset // page_size) + 1,
             "page_size": page_size,
+            "offset": skip_n,
+            "q": q or "",
         }
     except Exception as e:
         return {"success": False, "error": f"Unified search failed: {str(e)[:200]}", "entries": [], "total": 0}
+
+
+def _first_string_match(doc: dict, q_lower: str) -> tuple:
+    """Return (match_field, highlight) for the first field whose stringified
+    value contains q_lower (case-insensitive). highlight wraps the match in **...**.
+
+    Skips internal fields (_id, _source, match_field, highlight).
+    """
+    skip = {"_id", "_source", "match_field", "highlight", "timestamp"}
+    for k, v in doc.items():
+        if k in skip:
+            continue
+        if v is None:
+            continue
+        s = str(v)
+        idx = s.lower().find(q_lower)
+        if idx >= 0:
+            end = idx + len(q_lower)
+            highlight = s[:idx] + "**" + s[idx:end] + "**" + s[end:]
+            # Truncate to 200 chars max to keep response payload sane.
+            # Build the marked substring from the raw window first, THEN wrap
+            # with "..." prefix/suffix so local_idx arithmetic stays consistent.
+            if len(highlight) > 200:
+                start = max(0, idx - 60)
+                end_w = start + 200
+                window = s[start:end_w]                   # raw 200 chars
+                local_idx = idx - start                    # 0-based within window
+                local_end = local_idx + len(q_lower)
+                marked = (
+                    window[:local_idx] + "**" +
+                    window[local_idx:local_end] + "**" +
+                    window[local_end:]
+                )
+                prefix = "" if start == 0 else "..."
+                suffix = "" if end_w >= len(s) else "..."
+                highlight = prefix + marked + suffix
+            return k, highlight
+    return None, None
 
 
 async def log_mcp_event(tool_name: str, arguments: dict, result_summary: str,
