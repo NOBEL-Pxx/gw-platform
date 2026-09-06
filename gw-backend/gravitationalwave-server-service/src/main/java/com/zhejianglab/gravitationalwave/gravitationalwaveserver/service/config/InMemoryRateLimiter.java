@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -16,12 +15,10 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Default single-instance rate limiter backed by ConcurrentHashMap.
- * Activated when no Redis profile is active (mutually exclusive with RedisRateLimiter).
- * R6.65: @Profile("!redis") prevents the bean-ambiguity that broke startup when
- * both rate limiter implementations were loaded under SPRING_PROFILES_ACTIVE=local,redis.
+ * R6.66.1: Removed @Profile("!redis") — RedisRateLimiter was deleted (was dead code that
+ * never built successfully). Now this is the only RateLimiter implementation.
  */
 @Component
-@Profile("!redis")
 public class InMemoryRateLimiter implements RateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryRateLimiter.class);
@@ -29,13 +26,13 @@ public class InMemoryRateLimiter implements RateLimiter {
     private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
 
     @Value("${rate.limit.capacity:60}")
-    private int capacity;
+    private int capacity = 60;
 
     @Value("${rate.limit.refill-minutes:1}")
-    private int refillMinutes;
+    private int refillMinutes = 1;
 
     @Value("${rate.limit.cleanup-minutes:15}")
-    private int cleanupMinutes;
+    private int cleanupMinutes = 15;
 
     @Override
     public boolean tryConsume(String key) {

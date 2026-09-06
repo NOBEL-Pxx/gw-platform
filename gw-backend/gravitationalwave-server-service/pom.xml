@@ -98,23 +98,6 @@
             <artifactId>bucket4j-core</artifactId>
         </dependency>
 
-        <!-- R6.53 #3: Distributed rate limiter via Redis (only loaded under 'redis' profile) -->
-        <dependency>
-            <groupId>com.bucket4j</groupId>
-            <artifactId>bucket4j-redis</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>io.lettuce</groupId>
-            <artifactId>lettuce-core</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-            <optional>true</optional>
-        </dependency>
-
         <!-- Jakarta Servlet API (provided by container at runtime, needed for HandlerInterceptor) -->
         <dependency>
             <groupId>jakarta.servlet</groupId>
