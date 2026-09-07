@@ -17,10 +17,14 @@ New endpoints added to the FastAPI server:
 Usage: Import in server.py and call register_routes(app)
 """
 import json, time, logging
+import datetime
+import os
 from typing import Optional, List
 
 from fastapi import Request, Query
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
+import hashlib
+import hmac, PlainTextResponse
 
 logger = logging.getLogger("gw.routes-v437")
 
@@ -174,6 +178,82 @@ def register_routes(app):
             return {"status": "error", "error": str(e)}
 
     # R6.66.3: Mongo audit health endpoint
+    @app.post("/pipeline/audit/ingest")
+    async def audit_ingest(request: Request):
+        """R6.67.4: ingest audit event from external service (gw-backend).
+
+        Designed for gw-backend (Spring Boot) to push audit events via HTTP
+        rather than learning Mongo directly. Pipeline owns the Mongo client
+        + index management; backend just POSTs a JSON body.
+
+        Auth: shared HMAC token via X-Audit-Token header. Token must equal
+        os.getenv("BACKEND_AUDIT_TOKEN", ""). Empty token = endpoint
+        refuses all requests (fail-closed default).
+
+        Request body fields (all optional except none - any JSON object):
+            timestamp: ISO 8601 string (defaults to now)
+            session_id, action, user, user_role, request_path, method,
+            status_code, latency_ms, ip_hash, plus arbitrary extras
+
+        Returns:
+            {"accepted": true, "mongo_written": true/false}
+        """
+        try:
+            from .audit_mongo import write_audit_entry
+        except ImportError:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "audit module not available"},
+            )
+
+        # R6.67.4: HMAC token check (fail-closed)
+        expected = os.getenv("BACKEND_AUDIT_TOKEN", "")
+        if not expected:
+            _log.warning("audit/ingest called but BACKEND_AUDIT_TOKEN not set")
+            return JSONResponse(
+                status_code=503,
+                content={"error": "ingest endpoint disabled (BACKEND_AUDIT_TOKEN not set)"},
+            )
+        provided = request.headers.get("X-Audit-Token", "")
+        if not hmac.compare_digest(provided, expected):
+            _log.warning("audit/ingest rejected: invalid token from %s", request.client)
+            return JSONResponse(
+                status_code=401,
+                content={"error": "invalid X-Audit-Token"},
+            )
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid JSON body: " + str(e)[:200]},
+            )
+
+        if not isinstance(body, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "body must be a JSON object"},
+            )
+
+        # R6.67.4: tag with source=backend so downstream consumers can filter
+        body.setdefault("source", "backend")
+        body.setdefault("ingested_ts", datetime.datetime.utcnow().isoformat() + "Z")
+
+        # Parse timestamp if provided as string
+        if "timestamp" in body and isinstance(body["timestamp"], str):
+            try:
+                body["timestamp"] = datetime.datetime.fromisoformat(
+                    body["timestamp"].replace("Z", "+00:00")
+                )
+            except ValueError:
+                # Leave as string; write_audit_entry will setdefault
+                pass
+
+        mongo_written = await write_audit_entry(body)
+        return {"accepted": True, "mongo_written": mongo_written}
+
+
     @app.get("/pipeline/admin/audit/health")
     async def audit_health(request: Request):
         """R6.66.3: lightweight Mongo audit health snapshot."""
