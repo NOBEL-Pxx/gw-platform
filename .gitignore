@@ -81,3 +81,7 @@ gw-pipeline/models/*.onnx
 
 # Orphan submodule (R6.60.b留待: should be re-established as proper submodule or deleted)
 # gw-backend/  # uncomment to ignore — for now, leave as-is for review
+
+# ─── R6.73 untracked cleanup (2026-09-08) ──────────────────────────────
+# Soft-delete workspace (used by Claude Code manual delete → recycle bin workflow)
+.trash/
