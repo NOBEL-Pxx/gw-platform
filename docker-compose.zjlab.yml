@@ -34,6 +34,14 @@ services:
   # On zjlab: set REDIS_PASSWORD in /home/zjlab/gravitationalwave-v4.31/.env
   # (generate with: openssl rand -base64 32).
   redis:
+    # R6.76: admin socket isolation (P2 #8 followup). Maps redis admin
+    # port 6380 to localhost only — admin user can only be reached from
+    # zjlab host, NOT from gw-net (where app/readonly users live).
+    # To use: redis-cli -h 127.0.0.1 -p 6380 --user admin --pass <pwd>
+    # Security: if REDIS_ADMIN_PASSWORD leaks, attacker must also have
+    # shell access to zjlab host (port 127.0.0.1:6380 is not Docker DNS).
+    ports:
+      - "127.0.0.1:6380:6380"   # R6.76: admin socket, localhost-only
     # R6.73 #4: enable ACL with 3 users (admin/app/readonly). Falls back
     # to REDIS_PASSWORD (single user) if ACL file not yet provisioned.
     command:
