@@ -4,26 +4,33 @@
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
                               http://maven.apache.org/xsd/settings-1.0.0.xsd">
 
-    <!-- v4.12: Tiered mirror fallback — Maven Central primary, mirrors as backup.
-         Maven resolves mirrors in declaration order; first reachable wins. -->
+    <!-- R6.69: China-first mirror tiering — Maven mirror is first-match-wins,
+         so China mirrors MUST come BEFORE central (which is unreachable from
+         this network). See docs/ops/github-pat-escalation.md §R6.68 额外发现. -->
     <mirrors>
-        <!-- Tier 1: Maven Central directly (fastest when reachable) -->
-        <mirror>
-            <id>central</id>
-            <mirrorOf>central</mirrorOf>
-            <url>https://repo.maven.apache.org/maven2</url>
-        </mirror>
-        <!-- Tier 2: Tencent Cloud mirror (low-latency within China) -->
+        <!-- Tier 1: Tencent Cloud (lowest latency in China) -->
         <mirror>
             <id>tencent</id>
             <mirrorOf>central</mirrorOf>
             <url>https://mirrors.cloud.tencent.com/nexus/repository/maven-public/</url>
         </mirror>
-        <!-- Tier 3: Huawei Cloud mirror (fallback) -->
+        <!-- Tier 2: Huawei Cloud (fallback) -->
         <mirror>
             <id>huawei</id>
             <mirrorOf>central</mirrorOf>
             <url>https://repo.huaweicloud.com/repository/maven/</url>
+        </mirror>
+        <!-- Tier 3: Aliyun (third fallback) -->
+        <mirror>
+            <id>aliyun</id>
+            <mirrorOf>central</mirrorOf>
+            <url>https://maven.aliyun.com/repository/public</url>
+        </mirror>
+        <!-- Last resort: Maven Central (only if all mirrors fail) -->
+        <mirror>
+            <id>central</id>
+            <mirrorOf>central</mirrorOf>
+            <url>https://repo.maven.apache.org/maven2</url>
         </mirror>
     </mirrors>
 
