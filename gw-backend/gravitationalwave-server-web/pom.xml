@@ -17,7 +17,13 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-
+        <!-- R6.67.x: AOP support for AuditHttpAspect (@AspectJ @Around advice
+             on @RestController methods). spring-boot-starter-aop transitively
+             pulls in spring-aop + aspectjweaver. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.zhejianglab.gravitationalwave</groupId>
@@ -44,6 +50,13 @@
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
         </dependency>
+        <!-- R6.67.x: Test support for AuditHttpAspectTest (留待 #3). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- v4.38: SpringDoc OpenAPI (Fix #2) -->
         <dependency>
             <groupId>org.springdoc</groupId>
