@@ -11,6 +11,9 @@ interface AuditEntry {
   compliance_level: string
   user_role: string
   ip_hash: string
+  // R6.67.3: optional fields populated only when search q is active
+  match_field?: string
+  highlight?: string
 }
 
 interface AuditStats {
@@ -51,6 +54,39 @@ function formatTime(ts: string): string {
   }
 }
 
+// R6.67.3: render text with **...** markers as yellow-highlighted spans.
+// Sentry-style: matched substrings are wrapped in **...** by backend;
+// frontend splits on those markers and renders highlighted segments.
+function HighlightText({ text }: { text: string }) {
+  if (!text) return null
+  const parts = text.split(/(\*\*[^\*]+\*\*)/g)
+  return (
+    <>
+      {parts.map((part, i) => {
+        const m = part.match(/^\*\*([^\*]+)\*\*$/)
+        if (m) {
+          return (
+            <span
+              key={i}
+              data-testid="audit-highlight"
+              style={{
+                background: '#FFB800',
+                color: '#000',
+                fontWeight: 700,
+                padding: '0 2px',
+                borderRadius: 2,
+              }}
+            >
+              {m[1]}
+            </span>
+          )
+        }
+        return <span key={i}>{part}</span>
+      })}
+    </>
+  )
+}
+
 export default function AdminAuditPage() {
   const { user } = useAuth()
   const [entries, setEntries] = useState<AuditEntry[]>([])
@@ -60,6 +96,16 @@ export default function AdminAuditPage() {
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [filterAction, setFilterAction] = useState('')
+  // R6.67.3: search query (Sentry-style highlight trigger)
+  const [searchQuery, setSearchQuery] = useState('')
+  // Debounce search query to avoid hammering backend on every keystroke
+  const [searchQueryDebounced, setSearchQueryDebounced] = useState('')
+
+  // R6.67.3: 250ms debounce on search input
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQueryDebounced(searchQuery), 250)
+    return () => clearTimeout(t)
+  }, [searchQuery])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -85,6 +131,9 @@ export default function AdminAuditPage() {
       try {
         const params: Record<string, unknown> = { page: p, page_size: 50 }
         if (filterAction) params.action = filterAction
+        // R6.67.3: pass search q (if non-empty after trim)
+        const trimmedQ = searchQueryDebounced.trim()
+        if (trimmedQ) params.q = trimmedQ
         const { data } = await auditApi.get('/pipeline/admin/audit/logs', {
           params,
         })
@@ -95,13 +144,21 @@ export default function AdminAuditPage() {
       }
       setLoading(false)
     },
-    [filterAction],
+    [filterAction, searchQueryDebounced],
   )
 
   useEffect(() => {
     fetchStats()
     fetchAlerts()
   }, [fetchStats, fetchAlerts])
+
+  useEffect(() => {
+    // R6.67.3: reset to page 1 whenever the debounced search query changes
+    // (otherwise pagination is confusing across queries)
+    if (searchQueryDebounced !== undefined) {
+      setPage(1)
+    }
+  }, [searchQueryDebounced])
 
   useEffect(() => {
     fetchLogs(page)
@@ -325,6 +382,30 @@ export default function AdminAuditPage() {
           <option value='quota_exceeded'>quota_exceeded</option>
           <option value='llm_chat'>llm_chat</option>
         </select>
+        {/* R6.67.3: search input with debounce + Sentry-style highlight */}
+        <input
+          type="text"
+          placeholder="Search all fields..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          data-testid="audit-search-input"
+          style={{
+            background: '#0a0a0a',
+            color: '#FFB800',
+            border: `1px solid ${searchQuery ? '#FFB800' : '#1a1a1a'}`,
+            padding: '6px 12px',
+            fontFamily: 'inherit',
+            fontSize: 12,
+            flex: 1,
+            minWidth: 200,
+            outline: 'none',
+          }}
+        />
+        {searchQuery && (
+          <span style={{ color: '#FFB800', fontSize: 11, alignSelf: 'center' }}>
+            q="{searchQuery}" {searchQueryDebounced !== searchQuery ? '(typing...)' : ''}
+          </span>
+        )}
         <button
           onClick={() => {
             fetchStats()
@@ -361,6 +442,7 @@ export default function AdminAuditPage() {
                 'Time',
                 'Session',
                 'Action',
+                'Match', // R6.67.3: shows which field matched (when q active)
                 'Role',
                 'Compliance',
                 'IP Hash',
@@ -386,7 +468,7 @@ export default function AdminAuditPage() {
             {loading ? (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   style={{ padding: 40, textAlign: 'center', color: '#444' }}
                 >
                   Loading...
@@ -395,7 +477,7 @@ export default function AdminAuditPage() {
             ) : entries.length === 0 ? (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   style={{ padding: 40, textAlign: 'center', color: '#444' }}
                 >
                   No audit entries found
@@ -426,16 +508,44 @@ export default function AdminAuditPage() {
                     {entry.session_id?.slice(0, 12) || '—'}...
                   </td>
                   <td style={{ padding: '8px 12px' }}>
-                    <span
-                      style={{
-                        color:
-                          entry.action === 'injection_blocked'
-                            ? '#FF3B30'
-                            : '#00E676',
-                      }}
-                    >
-                      {entry.action}
-                    </span>
+                    {/* R6.67.3: highlight match in action cell (or below if matched elsewhere) */}
+                    {entry.match_field === 'action' && entry.highlight ? (
+                      <HighlightText text={entry.highlight} />
+                    ) : (
+                      <span
+                        style={{
+                          color:
+                            entry.action === 'injection_blocked'
+                              ? '#FF3B30'
+                              : '#00E676',
+                        }}
+                      >
+                        {entry.action}
+                      </span>
+                    )}
+                  </td>
+                  {/* R6.67.3: Match field indicator (Sentry-style column) */}
+                  <td
+                    style={{
+                      padding: '8px 12px',
+                      color: entry.match_field ? '#FFB800' : '#333',
+                      fontSize: 10,
+                      fontFamily: 'monospace',
+                      maxWidth: 200,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                    title={entry.highlight || ''}
+                  >
+                    {entry.match_field ? (
+                      entry.match_field !== 'action' && entry.highlight ? (
+                        <HighlightText text={entry.highlight} />
+                      ) : (
+                        <span>{entry.match_field}</span>
+                      )
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td style={{ padding: '8px 12px', color: '#aaa' }}>
                     {entry.user_role || '—'}

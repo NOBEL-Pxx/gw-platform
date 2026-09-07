@@ -159,6 +159,122 @@ async def test_verify_mongo_records_error_on_failure(audit_module):
     assert "mongo down" in audit_module._last_ping_err
 
 
+@pytest.mark.asyncio
+async def test_ensure_indexes_disabled_when_ttl_zero(audit_module):
+    """Case 8 (R6.67.5): AUDIT_TTL_DAYS=0 -> _ensure_indexes is a no-op."""
+    with patch.dict(os.environ, {"AUDIT_TTL_DAYS": "0"}):
+        import importlib
+        mod = importlib.reload(sys.modules["pipeline.audit_mongo"])
+        mock_client = MagicMock()
+        # When ttl_days=0, function should return True immediately
+        # without ever indexing into the client
+        audit_module._last_ping_err = None
+        result = await mod._ensure_indexes(mock_client)
+        assert result is True
+        # _last_ping_err should remain None (no error path)
+        assert audit_module._last_ping_err is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_indexes_calls_create_index(audit_module):
+    """Case 9 (R6.67.5): When TTL enabled, _ensure_indexes calls create_index
+    on the right collection with right expireAfterSeconds."""
+    mock_client = MagicMock()
+    mock_db = MagicMock()
+    mock_coll = MagicMock()
+    # Index chain: client[db_name] -> db[collection_name] -> coll.create_index
+    mock_client.__getitem__ = MagicMock(return_value=mock_db)
+    mock_db.__getitem__ = MagicMock(return_value=mock_coll)
+    # create_index returns a coroutine
+    mock_coll.create_index = AsyncMock(return_value="audit_ttl_ts")
+
+    audit_module._last_ping_err = None
+    result = await audit_module._ensure_indexes(mock_client)
+
+    assert result is True
+    mock_client.__getitem__.assert_called_with(audit_module._AUDIT_DB)
+    mock_db.__getitem__.assert_called_with(audit_module._AUDIT_COLLECTION)
+    mock_coll.create_index.assert_called_once()
+    # Check args: keys + expireAfterSeconds + name
+    args, kwargs = mock_coll.create_index.call_args
+    assert args[0] == [("timestamp", 1)]
+    assert kwargs.get("expireAfterSeconds") == audit_module._AUDIT_TTL_DAYS * 86400
+    assert kwargs.get("name") == "audit_ttl_ts"
+
+
+def test_get_health_includes_ttl(audit_module):
+    """Case 10 (R6.67.5): get_health() exposes ttl_days and ttl_index_ready."""
+    health = audit_module.get_health()
+    assert "ttl_days" in health
+    assert "ttl_index_ready" in health
+    # ttl_index_ready should default False
+    assert health["ttl_index_ready"] is False
+    # ttl_days should be int (default 90) or None (if env was 0)
+    assert health["ttl_days"] is None or isinstance(health["ttl_days"], int)
+
+
+def test_find_match_field_basic(audit_module):
+    """Case 11 (R6.67.3): _find_match_field returns first matching string field."""
+    doc = {
+        "action": "agent_chat",
+        "session_id": "sess-abc-123",
+        "user_role": "admin",
+        "timestamp": "2026-09-07T10:00:00Z",
+        "input_length": 100,
+    }
+    # Search for "abc" -> session_id
+    result = audit_module._find_match_field(doc, "abc")
+    assert result is not None
+    field_name, field_value, matched = result
+    assert field_name == "session_id"
+    assert "abc" in field_value
+    assert matched.lower() == "abc"
+
+
+def test_find_match_field_case_insensitive(audit_module):
+    """Case 12 (R6.67.3): _find_match_field is case-insensitive."""
+    doc = {"action": "AGENT_CHAT", "user_role": "admin"}
+    result = audit_module._find_match_field(doc, "agent")
+    assert result is not None
+    field_name, _, matched = result
+    assert field_name == "action"
+    assert matched == "AGENT"  # preserves original case
+
+
+def test_find_match_field_no_match(audit_module):
+    """Case 13 (R6.67.3): _find_match_field returns None when no field matches."""
+    doc = {"action": "agent_chat", "user_role": "admin"}
+    result = audit_module._find_match_field(doc, "nonexistent_string_xyz")
+    assert result is None
+
+
+def test_wrap_highlight_basic(audit_module):
+    """Case 14 (R6.67.3): _wrap_highlight wraps first match with **...**."""
+    wrapped = audit_module._wrap_highlight("hello world hello", "hello")
+    assert wrapped == "**hello** world hello"  # only first occurrence wrapped
+
+
+def test_wrap_highlight_case_insensitive(audit_module):
+    """Case 15 (R6.67.3): _wrap_highlight is case-insensitive but preserves case."""
+    wrapped = audit_module._wrap_highlight("Hello World", "hello")
+    assert wrapped == "**Hello** World"
+    assert wrapped != "**hello** World"  # original case preserved
+
+
+def test_wrap_highlight_no_match(audit_module):
+    """Case 16 (R6.67.3): _wrap_highlight returns original if no match."""
+    wrapped = audit_module._wrap_highlight("hello world", "xyz")
+    assert wrapped == "hello world"
+
+
+def test_wrap_highlight_regex_special_chars(audit_module):
+    """Case 17 (R6.67.3): _wrap_highlight escapes regex special chars in query."""
+    # _wrap_highlight uses re.escape() so literal . is treated as dot, not regex.
+    # The first literal dot in the string gets wrapped.
+    wrapped = audit_module._wrap_highlight("user.email = foo.bar", ".")
+    assert wrapped == "user**.**email = foo.bar"  # first literal dot wrapped
+
+
 # Helper: provide a pytest config in case conftest is absent
 def pytest_configure(config):
     config.addinivalue_line(

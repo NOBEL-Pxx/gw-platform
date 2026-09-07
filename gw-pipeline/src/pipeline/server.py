@@ -2658,11 +2658,20 @@ async def admin_audit_logs(
     action: str = None,
     level: str = None,
     user_role: str = None,
+    # R6.67.3: full-text search + Sentry-style highlight (**...** markers)
+    q: str = None,
 ):
-    """Query audit logs with pagination and filters. Admin only."""
+    """Query audit logs with pagination and filters. Admin only.
+
+    R6.67.3: `q` performs case-insensitive substring search across all
+    string fields. Matching entries carry `match_field` (which field
+    matched) and `highlight` (the value with **...** wrapping the
+    matched substring, Sentry-style).
+    """
     result = await query_audit_logs(
         page=page, page_size=min(page_size, 100),
         action=action, level=level, user_role=user_role,
+        q=q,
     )
     return result
 

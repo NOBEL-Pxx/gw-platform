@@ -12,13 +12,16 @@ Alert thresholds (env-configurable):
   - quota_exhaustion: >3 quota hits in 1 hour → WARNING
   - off_hours_access: Access between 02:00-05:00 UTC → INFO log
 """
-import os, logging, hashlib, datetime, asyncio, json
+import os, logging, hashlib, datetime, asyncio, json, re
 from typing import Optional, Dict, List, Any
 
 _log = logging.getLogger("gw-audit")
 
 # ── MongoDB config ──────────────────────────────────────────────────────
 _AUDIT_MONGO_URI = os.getenv("AUDIT_MONGO_URI", "mongodb://gw-mongodb:27017")
+# R6.67.5: TTL retention (days). 0 = disable TTL. Default 90 days.
+_AUDIT_TTL_DAYS = int(os.getenv("AUDIT_TTL_DAYS", "90"))
+_AUDIT_TTL_INDEX_NAME = "audit_ttl_ts"
 _AUDIT_DB = os.getenv("AUDIT_DB_NAME", "gw_audit")
 _AUDIT_COLLECTION = "compliance_logs"
 _ALERTS_COLLECTION = "audit_alerts"
@@ -45,6 +48,8 @@ _mongo_client: Optional[Any] = None
 _mongo_available: bool = False
 _last_ping_ts: float = 0.0
 _last_ping_err: Optional[str] = None
+# R6.67.5: sticky flag so _ensure_indexes runs only once per process
+_ttl_index_ready: bool = False
 
 
 def is_enabled() -> bool:
@@ -60,6 +65,8 @@ def get_health() -> dict:
         "last_ping_ts": _last_ping_ts or None,
         "last_error": _last_ping_err,
         "mode": "mongo+file" if _mongo_available else "file-only",
+        "ttl_days": _AUDIT_TTL_DAYS if _AUDIT_TTL_DAYS > 0 else None,
+        "ttl_index_ready": _ttl_index_ready,
     }
 
 
@@ -73,6 +80,32 @@ async def _verify_mongo(client) -> bool:
     except Exception as e:
         _last_ping_err = f"{type(e).__name__}: {str(e)[:200]}"
         _log.debug("Mongo ping failed: %s", _last_ping_err)
+        return False
+
+
+async def _ensure_indexes(client) -> bool:
+    """R6.67.5: ensure TTL index on `timestamp` field exists.
+
+    Idempotent — Mongo silently no-ops if index already exists with same spec.
+    Returns True on success or skip, False on error.
+    """
+    global _last_ping_err
+    if _AUDIT_TTL_DAYS <= 0:
+        _log.debug("AUDIT_TTL_DAYS=%d — TTL disabled", _AUDIT_TTL_DAYS)
+        return True
+    try:
+        db = client[_AUDIT_DB]
+        coll = db[_AUDIT_COLLECTION]
+        # expireAfterSeconds is per-index; createIndex with same name is no-op
+        await coll.create_index(
+            [("timestamp", 1)],
+            expireAfterSeconds=_AUDIT_TTL_DAYS * 86400,
+            name=_AUDIT_TTL_INDEX_NAME,
+        )
+        return True
+    except Exception as e:
+        _last_ping_err = f"ttl_index: {type(e).__name__}: {str(e)[:200]}"
+        _log.warning("Failed to ensure TTL index: %s", e)
         return False
 
 
@@ -99,6 +132,12 @@ async def _get_mongo_async():
         if not _mongo_available:
             _log.info("Audit MongoDB reachable: %s/%s", _AUDIT_DB, _AUDIT_COLLECTION)
         _mongo_available = True
+        # R6.67.5: ensure TTL index once after Mongo becomes available
+        global _ttl_index_ready
+        if not _ttl_index_ready:
+            if await _ensure_indexes(_mongo_client):
+                _ttl_index_ready = True
+                _log.info("Audit TTL index ready: %d days", _AUDIT_TTL_DAYS)
         return _mongo_client, True
     _mongo_available = False
     return _mongo_client, False
@@ -251,8 +290,15 @@ async def check_alerts(entry: dict) -> List[dict]:
 
 async def query_audit_logs(page: int = 1, page_size: int = 50,
                            action: str = None, level: str = None,
-                           user_role: str = None) -> dict:
-    """Query audit logs with pagination and filters. For admin dashboard."""
+                           user_role: str = None,
+                           q: str = None) -> dict:
+    """Query audit logs with pagination and filters. For admin dashboard.
+
+    R6.67.3: added `q` parameter for full-text substring search across
+    all string fields. Matching entries get `match_field` (the field
+    that contained the match) and `highlight` (the value with **...**
+    wrapping the matched substring, Sentry-style).
+    """
     client, available = _get_mongo()
     if not available or client is None:
         return {"success": False, "error": "Audit database not available", "entries": [], "total": 0}
@@ -270,6 +316,19 @@ async def query_audit_logs(page: int = 1, page_size: int = 50,
         if user_role:
             filt["user_role"] = user_role
 
+        # R6.67.3: full-text search via $regex (case-insensitive). For each
+        # returned entry, scan string fields for first match and emit
+        # match_field + highlight with **...** wrapping.
+        if q and q.strip():
+            pattern = re.compile(re.escape(q.strip()), re.IGNORECASE)
+            # Mongo $regex with multiple OR'd fields
+            string_fields = [
+                "action", "session_id", "compliance_level", "user_role",
+                "ip_hash", "user", "request_path", "method", "tool_name",
+                "prompt_excerpt", "blocked_reason",
+            ]
+            filt["$or"] = [{f: {"$regex": pattern}} for f in string_fields]
+
         total = await coll.count_documents(filt)
         cursor = coll.find(filt).sort("timestamp", -1).skip((page - 1) * page_size).limit(page_size)
         entries = []
@@ -277,11 +336,50 @@ async def query_audit_logs(page: int = 1, page_size: int = 50,
             doc["_id"] = str(doc["_id"])
             if isinstance(doc.get("timestamp"), datetime.datetime):
                 doc["timestamp"] = doc["timestamp"].isoformat() + "Z"
+
+            # R6.67.3: highlight = first matching field with **...** markers
+            if q and q.strip():
+                hit = _find_match_field(doc, q.strip())
+                if hit:
+                    field_name, field_value, matched_text = hit
+                    doc["match_field"] = field_name
+                    # Wrap matched substring with **...** (Sentry-style)
+                    doc["highlight"] = _wrap_highlight(field_value, matched_text)
+
             entries.append(doc)
 
-        return {"success": True, "entries": entries, "total": total, "page": page, "page_size": page_size}
+        return {"success": True, "entries": entries, "total": total,
+                "page": page, "page_size": page_size}
     except Exception as e:
         return {"success": False, "error": f"Audit query failed: {str(e)[:200]}", "entries": [], "total": 0}
+
+
+def _find_match_field(doc: dict, q: str):
+    """Find first string field in doc that contains q (case-insensitive).
+
+    Returns (field_name, field_value, matched_text) or None.
+    """
+    pattern = re.compile(re.escape(q), re.IGNORECASE)
+    for key, val in doc.items():
+        if key.startswith("_") or val is None:
+            continue
+        if not isinstance(val, str):
+            continue
+        m = pattern.search(val)
+        if m:
+            return (key, val, m.group(0))
+    return None
+
+
+def _wrap_highlight(value: str, matched: str) -> str:
+    """Wrap first occurrence of `matched` (case-insensitive) with **...**.
+
+    Returns the original string if no match (defensive).
+    """
+    if not matched:
+        return value
+    pattern = re.compile(re.escape(matched), re.IGNORECASE)
+    return pattern.sub(lambda m: f"**{m.group(0)}**", value, count=1)
 
 
 async def get_audit_stats() -> dict:
