@@ -40,6 +40,27 @@ export default tseslint.config(
       // R6.56: typescript-eslint 8.x schema changed, must provide empty {} for no-unused-expressions
       // (otherwise: 'Cannot read properties of undefined (reading allowShortCircuit)')
       '@typescript-eslint/no-unused-expressions': ['warn', { allowShortCircuit: false, allowTernary: false }],
+      // R6.67.6 IRON RULE: never use subpath @ant-design/icons/IconName imports.
+      // Root cause: vite/esbuild optimizeDeps bundles the CJS variant for subpath
+      // imports, whose `module.exports = _default` leaks `{default: RefIcon}` as
+      // the default export, breaking JSX <X /> with React #130 "type is object".
+      // Always use named imports: `import { RobotOutlined } from '@ant-design/icons'`.
+      // See STATE_SNAPSHOT.md §45.45 (2026-09-07) for full diagnosis.
+      'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '@ant-design/icons',
+            importNames: ['default'],
+            message: 'R6.67.6 iron rule: use named imports, not default. e.g. `import { RobotOutlined } from "@ant-design/icons"`.',
+          },
+        ],
+        patterns: [
+          {
+            group: ['@ant-design/icons/*'],
+            message: 'R6.67.6 iron rule: subpath imports like `@ant-design/icons/IconName` cause React #130 via CJS optimizeDeps leak. Use named imports from `@ant-design/icons`.',
+          },
+        ],
+      }],
     },
   },
 )
