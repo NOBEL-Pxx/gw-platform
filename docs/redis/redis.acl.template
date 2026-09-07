@@ -1,0 +1,25 @@
+# R6.73 #4: Redis 7.2+ ACL with 3 users
+#
+# Usage: copy this template to /home/zjlab/gravitationalwave-v4.31/redis.acl,
+# then fill in actual passwords (generate with: openssl rand -base64 32).
+# Mount via docker-compose.zjlab.yml redis service: --aclfile /usr/local/etc/redis/redis.acl
+#
+# Users:
+#   admin    - full access, sparingly used (FLUSHDB during deploy, DEBUG, etc.)
+#   app      - readwrite, used by Spring Data Redis + Bucket4j (main workload)
+#   readonly - read-only, used by observability dashboards + audit log readers
+#
+# Format: user <name> on ><password> [~<key-pattern>] [<command-categories>]
+#   ~*       = all keys
+#   +@all    = all commands
+#   +@read   = read-only commands (GET, HGET, LRANGE, ...)
+#   -@dangerous = exclude dangerous admin commands (FLUSHALL, SHUTDOWN, ...)
+
+# admin: full access
+user admin on >${REDIS_ADMIN_PASSWORD} ~* +@all
+
+# app: readwrite, no dangerous admin ops
+user app on >${REDIS_APP_PASSWORD} ~* +@read +@write -@dangerous -flushall -flushdb
+
+# readonly: read-only (observability + audit log readers)
+user readonly on >${REDIS_READONLY_PASSWORD} ~* +@read -@write

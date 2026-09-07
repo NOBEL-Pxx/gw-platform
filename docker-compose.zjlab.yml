@@ -34,6 +34,8 @@ services:
   # On zjlab: set REDIS_PASSWORD in /home/zjlab/gravitationalwave-v4.31/.env
   # (generate with: openssl rand -base64 32).
   redis:
+    # R6.73 #4: enable ACL with 3 users (admin/app/readonly). Falls back
+    # to REDIS_PASSWORD (single user) if ACL file not yet provisioned.
     command:
       - redis-server
       - --appendonly
@@ -42,6 +44,15 @@ services:
       - 256mb
       - --maxmemory-policy
       - allkeys-lru
+      # R6.73 #4: ACL file with 3 users. To enable:
+      #   1. Generate 3 passwords (openssl rand -base64 32 each)
+      #   2. cp D:/AliCPT/docs/redis/redis.acl.template redis.acl
+      #   3. Fill in ${REDIS_ADMIN_PASSWORD}, ${REDIS_APP_PASSWORD}, ${REDIS_READONLY_PASSWORD}
+      #   4. Uncomment --aclfile line + add redis.acl volume mount
+      # Currently disabled by default (single-password mode from R6.71 #3 still works).
+      # - --aclfile
+      # - /usr/local/etc/redis/redis.acl
+      # R6.71 #3 single-password fallback:
       - --requirepass
       - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
 
@@ -58,8 +69,12 @@ services:
       JAVA_OPTS: "-Xms1g -Xmx3g"
       # R6.71 #3: pass Redis password for Spring Data Redis + Bucket4j Lettuce
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
-      # R6.71 #3: embed password in Bucket4j URI (Lettuce reads from URI)
-      RATE_LIMIT_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379
+      # R6.73 #4: Redis ACL username (default: app user, empty string = single-user mode)
+      REDIS_USERNAME: ${REDIS_USERNAME:-}
+      # R6.73 #4: Bucket4j URI now includes username (defaults to empty for backward compat)
+      RATE_LIMIT_REDIS_URI: redis://${REDIS_USERNAME:-}:${REDIS_PASSWORD}@redis:6379
+      # R6.73 #4: Optional observability connection (readonly user, empty default = feature off)
+      OBSERVABILITY_REDIS_URI: ${OBSERVABILITY_REDIS_URI:-}
     deploy:
       resources:
         limits: { cpus: '4.0', memory: 4G }

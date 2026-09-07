@@ -21,6 +21,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import jakarta.annotation.PostConstruct;
 
 /**
  * R6.66.2: Pipeline Proxy Controller.
@@ -54,6 +56,19 @@ public class PipelineProxyController {
     /** Request timeout in milliseconds. */
     private static final int TIMEOUT_MS = 30000;
 
+    /**
+     * R6.73 #2: Allowlist of hosts permitted to call this proxy.
+     * Default: gw-frontend (Docker DNS name) + loopback. Anything else
+     * returns 403 immediately. To permit a specific external IP (debug
+     * SSH tunnel etc.), set GW_PIPELINE_PROXY_ALLOWED_HOSTS env as a
+     * comma-separated list (hostnames or IPs, exact match).
+     */
+    private static final Set<String> DEFAULT_ALLOWED_UPSTREAM_HOSTS = Set.of(
+        "gw-frontend", "127.0.0.1", "::1", "localhost"
+    );
+
+    private Set<String> allowedUpstreamHosts;
+
     private final RestTemplate restTemplate;
 
     public PipelineProxyController() {
@@ -65,6 +80,37 @@ public class PipelineProxyController {
         ((org.springframework.http.client.SimpleClientHttpRequestFactory)
             this.restTemplate.getRequestFactory())
             .setReadTimeout(TIMEOUT_MS);
+    }
+
+    /**
+     * R6.73 #2: Load allowed hosts from env, falling back to defaults.
+     * Env: GW_PIPELINE_PROXY_ALLOWED_HOSTS=host1,host2 (exact match).
+     */
+    @PostConstruct
+    void loadAllowedUpstreamHosts() {
+        String env = System.getenv("GW_PIPELINE_PROXY_ALLOWED_HOSTS");
+        if (env == null || env.isBlank()) {
+            this.allowedUpstreamHosts = DEFAULT_ALLOWED_UPSTREAM_HOSTS;
+        } else {
+            this.allowedUpstreamHosts = Set.copyOf(
+                java.util.Arrays.stream(env.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(java.util.stream.Collectors.toSet())
+            );
+            if (this.allowedUpstreamHosts.isEmpty()) {
+                log.warn("GW_PIPELINE_PROXY_ALLOWED_HOSTS set but empty, using defaults");
+                this.allowedUpstreamHosts = DEFAULT_ALLOWED_UPSTREAM_HOSTS;
+            } else {
+                log.info("PipelineProxy allowed upstream hosts: {}", this.allowedUpstreamHosts);
+            }
+        }
+    }
+
+    /** R6.73 #2: returns true if remoteHost is permitted to call this proxy. */
+    private boolean isAllowedUpstream(String remoteHost) {
+        if (remoteHost == null || remoteHost.isBlank()) return false;
+        return allowedUpstreamHosts.contains(remoteHost);
     }
 
     @RequestMapping(value = "/**", method = RequestMethod.GET)
@@ -103,6 +149,20 @@ public class PipelineProxyController {
     }
 
     private ResponseEntity<byte[]> forward(HttpMethod method, HttpServletRequest req) throws IOException {
+        // R6.73 #2: IP whitelist check BEFORE any expensive work.
+        // Get remote host (honors X-Forwarded-For if configured by servlet container,
+        // otherwise raw socket address). gw-frontend nginx proxies to us via
+        // Docker DNS, so remote host will be gw-frontend or its bridge IP.
+        String remoteHost = req.getRemoteHost();
+        if (!isAllowedUpstream(remoteHost)) {
+            log.warn("[proxy] BLOCKED {} {} from remote={} (allowed={})",
+                method, req.getRequestURI(), remoteHost, allowedUpstreamHosts);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .header("Content-Type", "application/json")
+                .body(("{\"error\":\"forbidden\",\"reason\":\"upstream_not_whitelisted\","
+                    + "\"remote\":\"" + remoteHost + "\"}").getBytes(StandardCharsets.UTF_8));
+        }
+
         String fullPath = req.getRequestURI();
         // fullPath is /pipeline/audit/unified (no prefix stripping; gw-pipeline expects /pipeline/...)
         String url = UPSTREAM + fullPath;
