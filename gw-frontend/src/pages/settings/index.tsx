@@ -152,7 +152,7 @@ export default function SettingsPage() {
             Info
           </Title>
           <Tag color='cyan' className='font-semibold'>
-            v4.62
+            v4.62+R6.69
           </Tag>
         </div>
 
@@ -214,8 +214,8 @@ export default function SettingsPage() {
             <Descriptions.Item label='Subtitle'>
               Astronomical Data Platform
             </Descriptions.Item>
-            <Descriptions.Item label='Version'>v4.62</Descriptions.Item>
-            <Descriptions.Item label='Build Date'>2026-09-03</Descriptions.Item>
+            <Descriptions.Item label='Version'>v4.62+R6.69</Descriptions.Item>
+            <Descriptions.Item label='Build Date'>2026-09-08</Descriptions.Item>
             <Descriptions.Item label='Architecture'>
               7 Docker Containers (Frontend + Backend + Pipeline + Firefly +
               Elasticsearch + MongoDB + MCP Server)
@@ -869,7 +869,7 @@ export default function SettingsPage() {
         {/* Footer */}
         <div className='text-center pt-2 pb-6'>
           <Text className='text-white/35 text-xs'>
-            AliCPT DIVS v4.62 · Built with Aurora Maximalism · © 2026
+            AliCPT DIVS v4.62+R6.69 · Built with Aurora Maximalism · © 2026
           </Text>
         </div>
       </div>

@@ -9,7 +9,7 @@ import { captureFontError, initSentry } from '../sentry'
 
 const ERROR_KEY = 'gw-font-errors' // last 50 (R6.43 backward compat)
 const REPORT_URL = '/pipeline/observability/font-errors'
-const APP_VERSION = 'v4.62+R6.45'
+const APP_VERSION = 'v4.62+R6.69'
 interface WindowWithEnv extends Window {
   GW_APP_ENV?: string
 }
