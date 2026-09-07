@@ -105,6 +105,33 @@
             </resource>
         </resources>
         <plugins>
+            <!-- R6.72 #3: generate src/main/resources/version.properties via git describe -->
+            <plugin>
+                <groupId>org.codehaus.gmaven</groupId>
+                <artifactId>groovy-maven-plugin</artifactId>
+                <version>2.1.1</version>
+                <executions>
+                    <execution>
+                        <id>write-version-properties</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>execute</goal></goals>
+                        <configuration>
+                            <source><![CDATA[
+                                def desc = 'unknown'
+                                try {
+                                    desc = 'git describe --tags --long --dirty'.execute().text.trim()
+                                } catch (Exception e) {
+                                    getLog().warn('R6.72 git describe failed: ' + e.message)
+                                }
+                                def propsFile = new File(project.basedir, 'src/main/resources/version.properties')
+                                propsFile.parentFile.mkdirs()
+                                propsFile.text = "app.version=${desc}\n"
+                                getLog().info('R6.72 wrote ' + propsFile + ' = ' + desc)
+                            ]]></source>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
