@@ -6,11 +6,39 @@ v4.16: Added degradation-status endpoint, per-response source metadata headers.
 import os, time
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from gw_client import GWClient, degrade_state
 from typing import Optional
 import uvicorn
 
+# R6.75: Rate limit (per-IP, 60 req/min default) + request size limit (10 MB max)
+RATE_LIMIT_DEFAULT = os.getenv("MCP_RATE_LIMIT", "60/minute")
+RATE_LIMIT_HEAVY = os.getenv("MCP_RATE_LIMIT_HEAVY", "10/minute")  # for /heavy endpoints
+MAX_BODY_SIZE_BYTES = int(os.getenv("MCP_MAX_BODY_SIZE_MB", "10")) * 1024 * 1024
+
+limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT_DEFAULT])
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """R6.75: Reject requests with Content-Length > MAX_BODY_SIZE_BYTES (default 10MB)."""
+    async def dispatch(self, request, call_next):
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > MAX_BODY_SIZE_BYTES:
+            return Response(
+                content=('{"error":"request_too_large","max_bytes":%d}' % MAX_BODY_SIZE_BYTES).encode(),
+                status_code=413, media_type="application/json"
+            )
+        return await call_next(request)
+
 app = FastAPI(title="GW MCP Server", version="1.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 client = GWClient()
 
 # ── Validation helpers ────────────────────────────────────────────

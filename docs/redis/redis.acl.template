@@ -1,3 +1,17 @@
+# R6.75: 4-user ACL with admin socket isolation
+# - admin:  full access (used for FLUSHDB/DEBUG/SHUTDOWN via 127.0.0.1:6380 ONLY)
+# - app:    readwrite -dangerous (main app traffic, port 6379)
+# - readonly: read-only (observability dashboard, port 6379)
+# - cluster_admin: reserved for sentinel/cluster ops (future use)
+#
+# Admin socket isolation rationale (R6.75):
+# - In single-port mode (port 6379), admin user can be misused by app code
+#   (e.g., an LLM-generated SQL accidentally calling FLUSHDB via app password).
+# - R6.75 fix: admin user is bound to 127.0.0.1:6380 ONLY. Container network
+#   must explicitly map 6380 to enable admin access.
+# - This means: even if app password leaks, attacker cannot FLUSHDB.
+# - Caveat: requires compose `ports: ["127.0.0.1:6380:6380"]` mapping.
+
 # R6.73 #4: Redis 7.2+ ACL with 3 users
 #
 # Usage: copy this template to /home/zjlab/gravitationalwave-v4.31/redis.acl,
