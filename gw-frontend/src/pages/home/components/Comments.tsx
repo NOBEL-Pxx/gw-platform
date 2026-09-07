@@ -13,9 +13,9 @@ import {
   Select,
   Tooltip,
 } from 'antd'
-import UserOutlined from '@ant-design/icons/UserOutlined'
-import SendOutlined from '@ant-design/icons/SendOutlined'
-import DownloadOutlined from '@ant-design/icons/DownloadOutlined'
+import { DownloadOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
+
+
 import { Link } from 'react-router-dom'
 import { message } from '@/util/AntdMessage'
 import { CommentItem } from '@/types/api'

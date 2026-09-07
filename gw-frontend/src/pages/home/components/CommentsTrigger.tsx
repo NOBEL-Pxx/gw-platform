@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button, Modal } from 'antd'
-import CommentOutlined from '@ant-design/icons/CommentOutlined'
+import { CommentOutlined } from '@ant-design/icons'
 import Comments from './Comments'
 
 function CommentsTrigger({ graveId }: { graveId: string }) {

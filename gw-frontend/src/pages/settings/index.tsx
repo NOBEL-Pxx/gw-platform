@@ -1,17 +1,17 @@
 import { Card, Descriptions, Tag, Typography, Divider } from 'antd'
-import SettingOutlined from '@ant-design/icons/SettingOutlined'
-import TeamOutlined from '@ant-design/icons/TeamOutlined'
-import BankOutlined from '@ant-design/icons/BankOutlined'
-import ExperimentOutlined from '@ant-design/icons/ExperimentOutlined'
-import CodeOutlined from '@ant-design/icons/CodeOutlined'
-import CheckCircleOutlined from '@ant-design/icons/CheckCircleOutlined'
-import StarOutlined from '@ant-design/icons/StarOutlined'
-import DatabaseOutlined from '@ant-design/icons/DatabaseOutlined'
-import CloudUploadOutlined from '@ant-design/icons/CloudUploadOutlined'
-import SafetyCertificateOutlined from '@ant-design/icons/SafetyCertificateOutlined'
-import EyeOutlined from '@ant-design/icons/EyeOutlined'
-import BookOutlined from '@ant-design/icons/BookOutlined'
-import MenuOutlined from '@ant-design/icons/MenuOutlined'
+import { BankOutlined, BookOutlined, CheckCircleOutlined, CloudUploadOutlined, CodeOutlined, DatabaseOutlined, ExperimentOutlined, EyeOutlined, MenuOutlined, SafetyCertificateOutlined, SettingOutlined, StarOutlined, TeamOutlined } from '@ant-design/icons'
+
+
+
+
+
+
+
+
+
+
+
+
 
 const { Title, Text, Paragraph } = Typography
 

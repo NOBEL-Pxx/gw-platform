@@ -19,12 +19,12 @@ import {
   Timeline,
   Space,
 } from 'antd'
-import LinkOutlined from '@ant-design/icons/LinkOutlined'
-import PlusOutlined from '@ant-design/icons/PlusOutlined'
-import ExportOutlined from '@ant-design/icons/ExportOutlined'
-import NodeIndexOutlined from '@ant-design/icons/NodeIndexOutlined'
-import HistoryOutlined from '@ant-design/icons/HistoryOutlined'
-import FileTextOutlined from '@ant-design/icons/FileTextOutlined'
+import { ExportOutlined, FileTextOutlined, HistoryOutlined, LinkOutlined, NodeIndexOutlined, PlusOutlined } from '@ant-design/icons'
+
+
+
+
+
 import axios from 'axios'
 
 const { Title, Text } = Typography

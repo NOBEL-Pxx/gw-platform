@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Switch, Tag, Spin, Button } from 'antd'
-import SendOutlined from '@ant-design/icons/SendOutlined'
-import DownloadOutlined from '@ant-design/icons/DownloadOutlined'
-import SearchOutlined from '@ant-design/icons/SearchOutlined'
-import DeleteOutlined from '@ant-design/icons/DeleteOutlined'
-import CopyOutlined from '@ant-design/icons/CopyOutlined'
-import ReloadOutlined from '@ant-design/icons/ReloadOutlined'
-import HistoryOutlined from '@ant-design/icons/HistoryOutlined'
-import LoginOutlined from '@ant-design/icons/LoginOutlined'
+import { CopyOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, LoginOutlined, ReloadOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons'
+
+
+
+
+
+
+
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import axios from 'axios'

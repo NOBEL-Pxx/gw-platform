@@ -1,4 +1,11 @@
-import ErrorBoundary from '@/components/ErrorBoundary'
+// R6.67.4: inlined a local ErrorBoundary instead of importing the shared
+// `@/components/ErrorBoundary` default export. The bundle's cross-chunk
+// import (`import{t as E} from './index-...js'` where entry aliases J->t)
+// was resolving to an object (React error #130) - the safest workaround is
+// to keep the boundary component co-located with the consumer so it lives
+// in the SAME chunk and avoids the cross-chunk default-export lookup.
+
+import { Component, type ReactNode } from 'react'
 
 interface AladinProps {
   // R6.13: parent (MultiBandDataPanel) pre-computes the big-viewer URL using
@@ -21,7 +28,37 @@ interface AladinProps {
   filter?: string
 }
 
-// R6.13: pure renderer — no URL logic, no FITS prop. The old Aladin iframe +
+// R6.67.4: minimal local ErrorBoundary, co-located to avoid the
+// cross-chunk default-export bug that resolved the shared
+// @/components/ErrorBoundary to an object (React error #130) when
+// imported from the CommentsTrigger chunk via `import{t as E}`.
+class LocalErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  state = { hasError: false, error: null as Error | null }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error: Error) {
+    console.error('[Aladin LocalErrorBoundary]', error)
+  }
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div
+          className='flex items-center justify-center p-4 text-white/60 text-sm'
+          style={{ minHeight: 420, background: '#0A0F1E' }}
+        >
+          Aladin render error: {this.state.error?.message || 'unknown'}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// R6.13: pure renderer - no URL logic, no FITS prop. The old Aladin iframe +
 // Aladin Lite v3.8.2 approach is gone (R6.12 replaced it with a plain <img>
 // using /pipeline/thumbnail; R6.13 consumes a URL the parent already
 // validated and cached).
@@ -32,7 +69,7 @@ export default function Aladin({
   filter,
 }: AladinProps): JSX.Element {
   return (
-    <ErrorBoundary>
+    <LocalErrorBoundary>
       <div
         className='w-full h-full relative flex items-center justify-center'
         style={{ minHeight: 420, background: '#000' }}
@@ -51,8 +88,8 @@ export default function Aladin({
             loading='eager'
             // R6.27i.e: ms-level band-switch response.
             // - decoding="sync": forces synchronous decode, eliminating the
-            //   async flicker (old image → blank → new image). For cached
-            //   400px JPEGs, sync decode is ~20-30ms — acceptable trade-off
+            //   async flicker (old image -> blank -> new image). For cached
+            //   400px JPEGs, sync decode is ~20-30ms - acceptable trade-off
             //   for no flicker.
             // - fetchpriority="high": browser prioritizes this image's
             //   network/decode work over lower-priority images on the page.
@@ -63,6 +100,6 @@ export default function Aladin({
           <div className='text-white/40 text-sm'>Select a band to view</div>
         )}
       </div>
-    </ErrorBoundary>
+    </LocalErrorBoundary>
   )
 }

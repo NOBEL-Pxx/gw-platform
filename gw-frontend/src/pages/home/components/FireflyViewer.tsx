@@ -1,7 +1,40 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
-import ErrorBoundary from '@/components/ErrorBoundary'
+// R6.67.4: inlined a local ErrorBoundary instead of importing the shared
+// `@/components/ErrorBoundary` default export. The bundle's cross-chunk
+// import (`import{t as E} from './index-...js'` where entry aliases J->t)
+// was resolving to an object (React error #130). Co-locating the boundary
+// keeps it in the SAME chunk as the consumer and sidesteps the lookup.
+
+import { useState, useMemo, useEffect, useCallback, useRef, Component, type ReactNode } from 'react'
 import { Select, Switch, Tooltip, InputNumber, Button, Slider } from 'antd'
-import ReloadOutlined from '@ant-design/icons/ReloadOutlined'
+import { ReloadOutlined } from '@ant-design/icons'
+
+// R6.67.4: minimal local ErrorBoundary, co-located to avoid the
+// cross-chunk default-export bug (React error #130).
+class LocalErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  state = { hasError: false, error: null as Error | null }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error: Error) {
+    console.error('[Firefly LocalErrorBoundary]', error)
+  }
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div
+          className='flex items-center justify-center p-4 text-white/60 text-sm'
+          style={{ minHeight: 200, background: '#0A0F1E' }}
+        >
+          Firefly render error: {this.state.error?.message || 'unknown'}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const COLOR_TABLES: Record<string, number> = {
   Grayscale: 0,
@@ -194,7 +227,7 @@ export default function FireflyViewer({
   }, [])
 
   return (
-    <ErrorBoundary>
+    <LocalErrorBoundary>
       <div
         className='w-full h-full flex flex-col'
         style={{ background: '#0A0F24' }}
@@ -238,7 +271,7 @@ export default function FireflyViewer({
           </Tooltip>
           {is2MASS && (
             <span
-              className='text-xs px-1.5 py-0.5 rounded shrink-0'
+              className='text-xs px-1.5 py-1 rounded shrink-0'
               style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}
             >
               2MASS
@@ -351,6 +384,6 @@ export default function FireflyViewer({
           )}
         </div>
       </div>
-    </ErrorBoundary>
+    </LocalErrorBoundary>
   )
 }

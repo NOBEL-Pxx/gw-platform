@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Table, Empty, Spin } from 'antd'
-import FolderOpenOutlined from '@ant-design/icons/FolderOpenOutlined'
+import { FolderOpenOutlined } from '@ant-design/icons'
 import { getSharedCollection } from '@/service'
 import type { CollectionDataItem } from '@/types/api'
 import type { ColumnsType } from 'antd/es/table'

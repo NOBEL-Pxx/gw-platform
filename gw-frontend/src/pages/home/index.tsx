@@ -10,8 +10,8 @@ import {
   Tooltip,
   message as antMsg,
 } from 'antd'
-import HeartOutlined from '@ant-design/icons/HeartOutlined'
-import HeartFilled from '@ant-design/icons/HeartFilled'
+import { HeartFilled, HeartOutlined } from '@ant-design/icons'
+
 
 import Search from './components/Search'
 import { getGravitationalWave, toggleFavorite, checkFavorites } from '@/service'

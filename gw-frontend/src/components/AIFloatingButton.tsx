@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Drawer, Button, Card, Divider, Tag } from 'antd'
 import { useFloatingButtonVisible } from '@/hooks/useFloatingButtonVisible'
-import RobotOutlined from '@ant-design/icons/RobotOutlined'
-import ExperimentOutlined from '@ant-design/icons/ExperimentOutlined'
-import ThunderboltOutlined from '@ant-design/icons/ThunderboltOutlined'
-import ApiOutlined from '@ant-design/icons/ApiOutlined'
-import CloseOutlined from '@ant-design/icons/CloseOutlined'
-import StarOutlined from '@ant-design/icons/StarOutlined'
-import EyeOutlined from '@ant-design/icons/EyeOutlined'
-import AimOutlined from '@ant-design/icons/AimOutlined'
+import { AimOutlined, ApiOutlined, CloseOutlined, ExperimentOutlined, EyeOutlined, RobotOutlined, StarOutlined, ThunderboltOutlined } from '@ant-design/icons'
+
+
+
+
+
+
+
 import { useNavigate } from 'react-router-dom'
 import { ASSETS } from '@/constants/assets'
 

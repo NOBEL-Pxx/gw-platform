@@ -1,7 +1,7 @@
 import { memo, useState, useMemo, useCallback } from 'react'
 import { Button, Select, Tooltip, Spin, Segmented, message } from 'antd'
-import MergeCellsOutlined from '@ant-design/icons/MergeCellsOutlined'
-import DownloadOutlined from '@ant-design/icons/DownloadOutlined'
+import { DownloadOutlined, MergeCellsOutlined } from '@ant-design/icons'
+
 import type { GravitationalWaveItem } from '@/types/api'
 
 type StretchType = 'percentile' | 'asinh' | 'log'

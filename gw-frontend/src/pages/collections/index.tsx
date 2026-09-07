@@ -8,9 +8,9 @@ import {
   Tooltip,
   message as antMsg,
 } from 'antd'
-import AlertOutlined from '@ant-design/icons/AlertOutlined'
-import SendOutlined from '@ant-design/icons/SendOutlined'
-import CopyOutlined from '@ant-design/icons/CopyOutlined'
+import { AlertOutlined, CopyOutlined, SendOutlined } from '@ant-design/icons'
+
+
 import { getErrorReports, postComment } from '@/service'
 import { useAuth } from '@/contexts/AuthContext'
 import { ErrorReportItem } from '@/types/api'

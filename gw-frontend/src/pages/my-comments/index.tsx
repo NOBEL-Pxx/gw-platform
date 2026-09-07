@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Table, Empty, Tag } from 'antd'
-import CommentOutlined from '@ant-design/icons/CommentOutlined'
+import { CommentOutlined } from '@ant-design/icons'
 import { getCommentsByUserId } from '@/service'
 import { useAuth } from '@/contexts/AuthContext'
 import { CommentItem } from '@/types/api'

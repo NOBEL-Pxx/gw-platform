@@ -8,11 +8,11 @@ import StarfieldBackground, {
   detectGpuBudget,
 } from '@/components/StarfieldBackground'
 import { useFloatingButtonVisible } from '@/hooks/useFloatingButtonVisible'
-import UserOutlined from '@ant-design/icons/UserOutlined'
-import LogoutOutlined from '@ant-design/icons/LogoutOutlined'
-import CommentOutlined from '@ant-design/icons/CommentOutlined'
-import AlertOutlined from '@ant-design/icons/AlertOutlined'
-import MenuOutlined from '@ant-design/icons/MenuOutlined'
+import { AlertOutlined, CommentOutlined, LogoutOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons'
+
+
+
+
 
 type QualityTier = 'low' | 'medium' | 'high'
 const TIER_CONFIG: Record<

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Empty, Tooltip, Segmented, Slider } from 'antd'
-import QuestionCircleOutlined from '@ant-design/icons/QuestionCircleOutlined'
-import LoadingOutlined from '@ant-design/icons/LoadingOutlined'
+import { LoadingOutlined, QuestionCircleOutlined } from '@ant-design/icons'
+
 import { useRequest } from 'ahooks'
 import { getGravitationalWave } from '@/service'
 import Aladin from '@/pages/home/components/Aladin1'

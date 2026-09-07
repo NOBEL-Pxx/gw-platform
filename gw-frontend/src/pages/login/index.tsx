@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Form, Input, Button, Card, Tabs, Typography } from 'antd'
-import UserOutlined from '@ant-design/icons/UserOutlined'
-import LockOutlined from '@ant-design/icons/LockOutlined'
-import MailOutlined from '@ant-design/icons/MailOutlined'
+import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons'
+
+
 import { useAuth } from '@/contexts/AuthContext'
 
 const { Text } = Typography

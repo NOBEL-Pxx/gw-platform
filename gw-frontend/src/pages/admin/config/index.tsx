@@ -18,12 +18,12 @@ import {
   message,
   Spin,
 } from 'antd'
-import SettingOutlined from '@ant-design/icons/SettingOutlined'
-import SaveOutlined from '@ant-design/icons/SaveOutlined'
-import ReloadOutlined from '@ant-design/icons/ReloadOutlined'
-import ThunderboltOutlined from '@ant-design/icons/ThunderboltOutlined'
-import ControlOutlined from '@ant-design/icons/ControlOutlined'
-import BgColorsOutlined from '@ant-design/icons/BgColorsOutlined'
+import { BgColorsOutlined, ControlOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons'
+
+
+
+
+
 import axios from 'axios'
 
 const { Title, Text, Paragraph } = Typography

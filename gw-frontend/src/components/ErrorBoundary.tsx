@@ -1,6 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { Alert, Button } from 'antd'
-import ReloadOutlined from '@ant-design/icons/ReloadOutlined'
+import { ReloadOutlined } from '@ant-design/icons'
 
 interface Props {
   children: ReactNode
