@@ -360,9 +360,21 @@ export function buildImageUrl(
         const bBand = hipsBandName(e.rgbChannels.b)
         const defaultLow = profile.cutMinPct ?? 0.5
         const defaultHigh = profile.cutMaxPct ?? 99.5
-        const rCuts = contrastToCuts(contrastAdjust?.[rBand], defaultLow, defaultHigh)
-        const gCuts = contrastToCuts(contrastAdjust?.[gBand], defaultLow, defaultHigh)
-        const bCuts = contrastToCuts(contrastAdjust?.[bBand], defaultLow, defaultHigh)
+        const rCuts = contrastToCuts(
+          contrastAdjust?.[rBand],
+          defaultLow,
+          defaultHigh,
+        )
+        const gCuts = contrastToCuts(
+          contrastAdjust?.[gBand],
+          defaultLow,
+          defaultHigh,
+        )
+        const bCuts = contrastToCuts(
+          contrastAdjust?.[bBand],
+          defaultLow,
+          defaultHigh,
+        )
         const params = new URLSearchParams({
           mode: 'hips',
           r_hips: e.rgbChannels.r,
@@ -470,7 +482,8 @@ function largeImageUrl(
 ): string {
   const size = LARGE_SIZE_BY_SURVEY[e.survey] || LARGE_SIZE_DEFAULT
   // R6.28: RGB HiPS uses per-survey Hi-Q (e.g. 2MASS=high); otherwise caller quality.
-  const q = e.kind === 'rgb' && e.hipsColor ? getHipsQuality(e.hipsColor) : quality
+  const q =
+    e.kind === 'rgb' && e.hipsColor ? getHipsQuality(e.hipsColor) : quality
   return buildImageUrl(e, size, ra, dec, contrastAdjust, q)
 }
 

@@ -81,11 +81,16 @@ describe('R6.61.b buildImageUrl factory', () => {
   describe('RGB HiPS-color path (high quality → merge-rgb)', () => {
     // rgbChannels format per bandOrder.ts:340 → '2MASS/k' (no CDS/, no P/)
     // hipsBandName(hipsId) returns the part after '/' = 'k', 'h', 'j'
-    const e = rgb('2MASS', '/pipeline/merge-rgb?size=400', {
-      r: '2MASS/H',
-      g: '2MASS/J',
-      b: '2MASS/K',
-    }, 'CDS/P/2MASS/color')
+    const e = rgb(
+      '2MASS',
+      '/pipeline/merge-rgb?size=400',
+      {
+        r: '2MASS/H',
+        g: '2MASS/J',
+        b: '2MASS/K',
+      },
+      'CDS/P/2MASS/color',
+    )
 
     it('quality=high → /pipeline/merge-rgb with size param', () => {
       const url = buildImageUrl(e, 400, RA, DEC, undefined, 'high')
@@ -146,15 +151,36 @@ describe('R6.61.b buildImageUrl factory', () => {
     }
 
     it('returns /pipeline/thumbnail with given size', () => {
-      const url = buildImageUrl(e, 100, undefined, undefined, undefined, 'standard')
+      const url = buildImageUrl(
+        e,
+        100,
+        undefined,
+        undefined,
+        undefined,
+        'standard',
+      )
       expect(url).toContain('/pipeline/thumbnail')
       expect(url).toContain('size=100')
       expect(url).toContain('filename=foo.fits')
     })
 
     it('size param drives the only difference between sizes', () => {
-      const u100 = buildImageUrl(e, 100, undefined, undefined, undefined, 'standard')
-      const u400 = buildImageUrl(e, 400, undefined, undefined, undefined, 'standard')
+      const u100 = buildImageUrl(
+        e,
+        100,
+        undefined,
+        undefined,
+        undefined,
+        'standard',
+      )
+      const u400 = buildImageUrl(
+        e,
+        400,
+        undefined,
+        undefined,
+        undefined,
+        'standard',
+      )
       const stripSize = (u: string) => u.replace(/size=\d+/, 'size=N')
       expect(stripSize(u100)).toBe(stripSize(u400))
     })
@@ -184,11 +210,16 @@ describe('R6.61.b buildImageUrl factory', () => {
   })
 
   describe('contrastAdjust param propagates into cuts', () => {
-    const e = rgb('2MASS', '/pipeline/merge-rgb?size=400', {
-      r: '2MASS/H',
-      g: '2MASS/J',
-      b: '2MASS/K',
-    }, 'CDS/P/2MASS/color')
+    const e = rgb(
+      '2MASS',
+      '/pipeline/merge-rgb?size=400',
+      {
+        r: '2MASS/H',
+        g: '2MASS/J',
+        b: '2MASS/K',
+      },
+      'CDS/P/2MASS/color',
+    )
 
     it('non-zero contrast slider changes r_q_low/r_q_high values', () => {
       // slider=50 → shift = (50/100) * 99 * 0.3 = 14.85 → clearly different cuts.
@@ -241,11 +272,16 @@ describe('R6.61.b buildImageUrl factory', () => {
       },
       {
         name: '2MASS RGB HiPS high quality',
-        e: rgb('2MASS', '/pipeline/merge-rgb?size=400', {
-          r: '2MASS/H',
-          g: '2MASS/J',
-          b: '2MASS/K',
-        }, 'CDS/P/2MASS/color'),
+        e: rgb(
+          '2MASS',
+          '/pipeline/merge-rgb?size=400',
+          {
+            r: '2MASS/H',
+            g: '2MASS/J',
+            b: '2MASS/K',
+          },
+          'CDS/P/2MASS/color',
+        ),
         hips: true,
       },
     ]

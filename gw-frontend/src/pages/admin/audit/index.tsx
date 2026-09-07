@@ -59,16 +59,16 @@ function formatTime(ts: string): string {
 // frontend splits on those markers and renders highlighted segments.
 function HighlightText({ text }: { text: string }) {
   if (!text) return null
-  const parts = text.split(/(\*\*[^\*]+\*\*)/g)
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
   return (
     <>
       {parts.map((part, i) => {
-        const m = part.match(/^\*\*([^\*]+)\*\*$/)
+        const m = part.match(/^\*\*([^*]+)\*\*$/)
         if (m) {
           return (
             <span
               key={i}
-              data-testid="audit-highlight"
+              data-testid='audit-highlight'
               style={{
                 background: '#FFB800',
                 color: '#000',
@@ -384,11 +384,11 @@ export default function AdminAuditPage() {
         </select>
         {/* R6.67.3: search input with debounce + Sentry-style highlight */}
         <input
-          type="text"
-          placeholder="Search all fields..."
+          type='text'
+          placeholder='Search all fields...'
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          data-testid="audit-search-input"
+          data-testid='audit-search-input'
           style={{
             background: '#0a0a0a',
             color: '#FFB800',
@@ -403,7 +403,8 @@ export default function AdminAuditPage() {
         />
         {searchQuery && (
           <span style={{ color: '#FFB800', fontSize: 11, alignSelf: 'center' }}>
-            q="{searchQuery}" {searchQueryDebounced !== searchQuery ? '(typing...)' : ''}
+            q="{searchQuery}"{' '}
+            {searchQueryDebounced !== searchQuery ? '(typing...)' : ''}
           </span>
         )}
         <button

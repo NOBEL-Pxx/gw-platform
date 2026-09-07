@@ -79,7 +79,8 @@ function flush(): void {
   _queue = _queue.slice(MAX_BATCH)
   const body: CspReportBody = {
     violations: batch,
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+    userAgent:
+      typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
     url: typeof location !== 'undefined' ? location.href : 'unknown',
     ts: Date.now(),
   }
@@ -131,7 +132,9 @@ export function initCspMonitor(): void {
   if (_installed) return
   if (typeof document === 'undefined') return
   // Use capture phase to catch violations before any in-page handler.
-  document.addEventListener('securitypolicyviolation', onViolation, { capture: true })
+  document.addEventListener('securitypolicyviolation', onViolation, {
+    capture: true,
+  })
   _installed = true
   // Also flush before unload (debounce might not have fired yet).
   if (typeof window !== 'undefined') {
@@ -160,7 +163,9 @@ export const __test__ = {
   },
   uninstallForTest(onV: (e: SecurityPolicyViolationEvent) => void): void {
     if (typeof document === 'undefined') return
-    document.removeEventListener('securitypolicyviolation', onV, { capture: true } as any)
+    document.removeEventListener('securitypolicyviolation', onV, {
+      capture: true,
+    } as any)
   },
   flushSync(): void {
     flush()

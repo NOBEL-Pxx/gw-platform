@@ -2,10 +2,13 @@
 // @ts-nocheck — v4.32: DL Anomaly Classifier temporarily disabled
 import { useState, useCallback } from 'react'
 import { Button, Card, Progress, Spin, Tag, Typography } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
-
-
-
+import {
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  DownloadOutlined,
+  ReloadOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons'
 
 // v4.32: DL Anomaly Classifier disabled
 // import { classifyAnomaly } from '@/service'

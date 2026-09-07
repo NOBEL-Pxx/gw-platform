@@ -23,7 +23,9 @@ const _memCache = new Map<
 // R6.61.a: localStorage cache key prefix (versioned for future schema migration).
 const LS_PREFIX = 'gw-hips-v1:'
 
-function readLsCache(key: string): { endpoint: string; ts: number; ok: boolean } | null {
+function readLsCache(
+  key: string,
+): { endpoint: string; ts: number; ok: boolean } | null {
   try {
     const raw = localStorage.getItem(LS_PREFIX + key)
     if (!raw) return null
@@ -38,7 +40,10 @@ function readLsCache(key: string): { endpoint: string; ts: number; ok: boolean }
   }
 }
 
-function writeLsCache(key: string, value: { endpoint: string; ts: number; ok: boolean }): void {
+function writeLsCache(
+  key: string,
+  value: { endpoint: string; ts: number; ok: boolean },
+): void {
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value))
   } catch {
@@ -58,7 +63,8 @@ export function preconnectHipsEndpoints(): void {
   if (_preconnectFired) return
   if (typeof document === 'undefined') return
   HIPS_ENDPOINTS.forEach((href) => {
-    if (document.querySelector('link[rel="preconnect"][href="' + href + '"]')) return
+    if (document.querySelector('link[rel="preconnect"][href="' + href + '"]'))
+      return
     const link = document.createElement('link')
     link.rel = 'preconnect'
     link.href = href

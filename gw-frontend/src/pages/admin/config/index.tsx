@@ -18,11 +18,14 @@ import {
   message,
   Spin,
 } from 'antd'
-import { BgColorsOutlined, ControlOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons'
-
-
-
-
+import {
+  BgColorsOutlined,
+  ControlOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  SettingOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons'
 
 import axios from 'axios'
 

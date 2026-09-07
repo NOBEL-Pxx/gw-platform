@@ -12,7 +12,6 @@ import {
 } from 'antd'
 import { HeartFilled, HeartOutlined } from '@ant-design/icons'
 
-
 import Search from './components/Search'
 import { getGravitationalWave, toggleFavorite, checkFavorites } from '@/service'
 import { GravitationalWaveItem } from '@/types/api'

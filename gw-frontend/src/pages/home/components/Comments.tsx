@@ -15,7 +15,6 @@ import {
 } from 'antd'
 import { DownloadOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
 
-
 import { Link } from 'react-router-dom'
 import { message } from '@/util/AntdMessage'
 import { CommentItem } from '@/types/api'

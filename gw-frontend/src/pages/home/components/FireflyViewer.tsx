@@ -4,7 +4,15 @@
 // was resolving to an object (React error #130). Co-locating the boundary
 // keeps it in the SAME chunk as the consumer and sidesteps the lookup.
 
-import { useState, useMemo, useEffect, useCallback, useRef, Component, type ReactNode } from 'react'
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+  useRef,
+  Component,
+  type ReactNode,
+} from 'react'
 import { Select, Switch, Tooltip, InputNumber, Button, Slider } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 

@@ -10,7 +10,6 @@ import {
 } from 'antd'
 import { AlertOutlined, CopyOutlined, SendOutlined } from '@ant-design/icons'
 
-
 import { getErrorReports, postComment } from '@/service'
 import { useAuth } from '@/contexts/AuthContext'
 import { ErrorReportItem } from '@/types/api'

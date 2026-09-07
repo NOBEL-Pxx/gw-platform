@@ -7,7 +7,11 @@ describe('R6.61.c cspMonitor', () => {
   beforeEach(() => {
     __test__.reset()
     // Remove all listeners we might have installed
-    document.removeEventListener('securitypolicyviolation', __test__.installForTest as any, true)
+    document.removeEventListener(
+      'securitypolicyviolation',
+      __test__.installForTest as any,
+      true,
+    )
   })
 
   afterEach(() => {
@@ -80,8 +84,12 @@ describe('R6.61.c cspMonitor', () => {
     globalThis.fetch = fetchMock
 
     initCspMonitor()
-    document.dispatchEvent(makeViolation({ blockedURI: 'https://a.example.com/x.js' }))
-    document.dispatchEvent(makeViolation({ blockedURI: 'https://b.example.com/x.js' }))
+    document.dispatchEvent(
+      makeViolation({ blockedURI: 'https://a.example.com/x.js' }),
+    )
+    document.dispatchEvent(
+      makeViolation({ blockedURI: 'https://b.example.com/x.js' }),
+    )
 
     __test__.flushSync()
 
@@ -95,9 +103,15 @@ describe('R6.61.c cspMonitor', () => {
     globalThis.fetch = fetchMock
 
     initCspMonitor()
-    document.dispatchEvent(makeViolation({ blockedURI: 'inline', sample: 'inline-script' }))
-    document.dispatchEvent(makeViolation({ blockedURI: 'eval', sample: 'eval-call' }))
-    document.dispatchEvent(makeViolation({ blockedURI: 'https://x.example.com/y.js' }))
+    document.dispatchEvent(
+      makeViolation({ blockedURI: 'inline', sample: 'inline-script' }),
+    )
+    document.dispatchEvent(
+      makeViolation({ blockedURI: 'eval', sample: 'eval-call' }),
+    )
+    document.dispatchEvent(
+      makeViolation({ blockedURI: 'https://x.example.com/y.js' }),
+    )
 
     __test__.flushSync()
 

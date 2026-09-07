@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react'
 import { Card, Empty, Segmented, Tag, Typography } from 'antd'
-import LineChartOutlined from '@ant-design/icons/LineChartOutlined'
-import DotChartOutlined from '@ant-design/icons/DotChartOutlined'
-import CalendarOutlined from '@ant-design/icons/CalendarOutlined'
-import ExperimentOutlined from '@ant-design/icons/ExperimentOutlined'
+import {
+  CalendarOutlined,
+  DotChartOutlined,
+  ExperimentOutlined,
+  LineChartOutlined,
+} from '@ant-design/icons'
 
 const { Text, Title, Paragraph } = Typography
 

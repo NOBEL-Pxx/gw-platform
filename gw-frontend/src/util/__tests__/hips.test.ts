@@ -16,7 +16,9 @@ describe('hips utility', () => {
         if (k && k.startsWith('gw-hips-v1:')) keys.push(k)
       }
       keys.forEach((k) => localStorage.removeItem(k))
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   })
 
   afterEach(() => {
@@ -146,7 +148,10 @@ describe('hips utility', () => {
     it('writes entry to localStorage on backend resolve', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ endpoint: 'https://aladin.u-strasbg.fr', ok: true }),
+        json: async () => ({
+          endpoint: 'https://aladin.u-strasbg.fr',
+          ok: true,
+        }),
       })
       await buildHipsUrl('surveyA', 'tile.png')
       const keys: string[] = []
@@ -162,12 +167,13 @@ describe('hips utility', () => {
     })
 
     it('reads from localStorage on second call (no fetch)', async () => {
-      globalThis.fetch = vi
-        .fn()
-        .mockResolvedValueOnce({
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          endpoint: 'https://aladin.u-strasbg.fr',
           ok: true,
-          json: async () => ({ endpoint: 'https://aladin.u-strasbg.fr', ok: true }),
-        })
+        }),
+      })
       // First call - populate localStorage
       const u1 = await buildHipsUrl('surveyB', 'tile.png')
       // Second call - should hit localStorage, not fetch
@@ -193,7 +199,10 @@ describe('hips utility', () => {
     it('clearHipsCache also clears localStorage entries', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ endpoint: 'https://aladin.u-strasbg.fr', ok: true }),
+        json: async () => ({
+          endpoint: 'https://aladin.u-strasbg.fr',
+          ok: true,
+        }),
       })
       await buildHipsUrl('surveyD', 'tile.png')
       let count = 0
@@ -218,14 +227,21 @@ describe('hips utility', () => {
       const expiredTs = Date.now() - 25 * 60 * 60 * 1000 // 25h ago
       localStorage.setItem(
         expiredKey,
-        JSON.stringify({ endpoint: 'https://aladin.u-strasbg.fr', ts: expiredTs, ok: true }),
+        JSON.stringify({
+          endpoint: 'https://aladin.u-strasbg.fr',
+          ts: expiredTs,
+          ok: true,
+        }),
       )
       // Calling readLsCache directly via buildHipsUrl with same survey/tile
       // verifies the expired entry path. Use a fresh survey to avoid the
       // memCache from buildHipsUrl writing the same key.
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ endpoint: 'https://alasky.cds.unistra.fr', ok: true }),
+        json: async () => ({
+          endpoint: 'https://alasky.cds.unistra.fr',
+          ok: true,
+        }),
       })
       // Trigger a cache write under a DIFFERENT cache key
       await buildHipsUrl('freshSurvey', 'tile.png')
@@ -236,7 +252,10 @@ describe('hips utility', () => {
       // readLsCache, then fetch fresh, then write new entry under same key)
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ endpoint: 'https://alasky.cds.unistra.fr', ok: true }),
+        json: async () => ({
+          endpoint: 'https://alasky.cds.unistra.fr',
+          ok: true,
+        }),
       })
       await buildHipsUrl('expiredSurvey', 'oldTile.png')
       // After call: same key exists, but ts is fresh (NOT 25h-old)
@@ -251,7 +270,9 @@ describe('hips utility', () => {
     it('inserts 3 preconnect links on first call', async () => {
       vi.resetModules()
       const { preconnectHipsEndpoints: pc } = await import('../hips')
-      document.querySelectorAll('link[rel="preconnect"]').forEach((l) => l.remove())
+      document
+        .querySelectorAll('link[rel="preconnect"]')
+        .forEach((l) => l.remove())
       pc()
       const links = document.querySelectorAll('link[rel="preconnect"]')
       expect(links.length).toBe(3)
@@ -264,7 +285,9 @@ describe('hips utility', () => {
     it('is idempotent - second call adds no new links', async () => {
       vi.resetModules()
       const { preconnectHipsEndpoints: pc } = await import('../hips')
-      document.querySelectorAll('link[rel="preconnect"]').forEach((l) => l.remove())
+      document
+        .querySelectorAll('link[rel="preconnect"]')
+        .forEach((l) => l.remove())
       pc()
       pc()
       pc()
