@@ -409,11 +409,30 @@ services:
       gw-firefly:
         condition: service_healthy
     restart: unless-stopped
-    # v4.37 + R6.65: Security hardening, but read_only REMOVED for gw-frontend.
-    # Reason: read_only + tmpfs under docker compose v2.19.x is broken -
-    # the legacy Tmpfs API silently drops `:mode=1777` so any tmpfs is created
-    # as root:root 755. nginx user (uid 101) then can't write pid file or
-    # bind low ports cleanly. We keep the rest of v4.37 hardening.
+    # R6.66.2: docker compose v2.29.7 upgrade (was v2.19.1) — restore read_only: true.
+    # Root cause of R6.65 removal: legacy Tmpfs API in compose v2.19.x silently
+    # dropped `:mode=1777` suffix, creating tmpfs as root:root 0755. nginx user
+    # (uid 101) couldn't write pid file. v2.20+ preserves the mode correctly.
+    # Verified via tmpfs regression test on zjlab 2026-09-07.
+    # R6.66.2.b (2026-09-07): Inline `:mode=` suffix inside the tmpfs LIST entry is NOT
+    # standard compose syntax — it silently passes as a path string. Verified: nginx
+    # still failed with "open() \"/var/cache/nginx/nginx.pid\" failed (13: Permission
+    # denied)" because tmpfs was mounted root:root 0755. Switched to bare paths
+    # (matches the proven gw-backend/gw-pipeline/gw-firefly pattern above). In v2.29.7
+    # bare tmpfs creates with default mode 1777 (world-writable + sticky), which is
+    # exactly what nginx user (uid 101) needs for /var/cache/nginx/nginx.pid.
+    # R6.66.2.d (2026-09-07): read_only RESTORED to false. Root cause analysis
+    # confirms compose v2.29.7 mode pass-through works (verified: docker run --tmpfs
+    # /test1:size=1m alpine returns mode=1777 on this host). But the official nginx:1.19.9-alpine
+    # image runs as USER nginx (uid 101) and nginx still fails to write pid file at
+    # /var/cache/nginx/nginx.pid even with mode:1777 tmpfs mounted there. Suspected cause:
+    # Dockerfile USER nginx drops ALL privileges (no root phase), so nginx master can't
+    # chown /var/cache/nginx away from itself, and even with mode 1777 tmpfs, something
+    # in the entrypoint chain creates the dir at a restrictive mode before nginx tries.
+    # Without read_only the existing R6.65 state is preserved (no regression).
+    # Future fix path: custom Dockerfile RUN that wraps nginx start with chown,
+    # OR switch pid path to /tmp/nginx.pid in nginx.conf (already 1777 tmpfs).
+    # Tracking as R6.66+ 留待.
     security_opt:
       - no-new-privileges:true
     cap_drop:

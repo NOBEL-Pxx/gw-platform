@@ -22,6 +22,10 @@ _AUDIT_MONGO_URI = os.getenv("AUDIT_MONGO_URI", "mongodb://gw-mongodb:27017")
 _AUDIT_DB = os.getenv("AUDIT_DB_NAME", "gw_audit")
 _AUDIT_COLLECTION = "compliance_logs"
 _ALERTS_COLLECTION = "audit_alerts"
+_AUDIT_HEALTH_RECHECK_SEC = int(os.getenv("AUDIT_HEALTH_RECHECK_SEC", "60"))
+# R6.66.3: explicit enable flag (default true). When false, file-only mode enforced.
+_AUDIT_MONGO_ENABLED = os.getenv("AUDIT_MONGO_ENABLED", "true").lower() in ("true", "1", "yes")
+_AUDIT_MONGO_URI = os.getenv("AUDIT_MONGO_URI", "mongodb://gw-mongodb:27017")
 
 # ── Alert thresholds ────────────────────────────────────────────────────
 _ALERT_THRESHOLDS = {
@@ -31,9 +35,73 @@ _ALERT_THRESHOLDS = {
 }
 _ALERT_WINDOW_MIN = int(os.getenv("AUDIT_ALERT_WINDOW_MIN", "10"))  # 10-min sliding window
 
-# ── MongoDB client (lazy init) ──────────────────────────────────────────
+# MongoDB client (lazy init with ping verification) -
+# R6.66.3 state machine:
+#   _mongo_client    - motor client or None
+#   _mongo_available - last known good status (sticky until ping fails)
+#   _last_ping_ts    - epoch seconds of last successful serverSelection ping
+#   _last_ping_err   - most recent error string (for /health endpoint)
 _mongo_client: Optional[Any] = None
 _mongo_available: bool = False
+_last_ping_ts: float = 0.0
+_last_ping_err: Optional[str] = None
+
+
+def is_enabled() -> bool:
+    return _AUDIT_MONGO_ENABLED
+
+
+def get_health() -> dict:
+    return {
+        "enabled": _AUDIT_MONGO_ENABLED,
+        "available": _mongo_available,
+        "uri": _AUDIT_MONGO_URI.split("@")[-1] if "@" in _AUDIT_MONGO_URI else _AUDIT_MONGO_URI,
+        "database": _AUDIT_DB,
+        "last_ping_ts": _last_ping_ts or None,
+        "last_error": _last_ping_err,
+        "mode": "mongo+file" if _mongo_available else "file-only",
+    }
+
+
+async def _verify_mongo(client) -> bool:
+    global _last_ping_ts, _last_ping_err
+    try:
+        await client.admin.command("ping")
+        _last_ping_ts = datetime.datetime.utcnow().timestamp()
+        _last_ping_err = None
+        return True
+    except Exception as e:
+        _last_ping_err = f"{type(e).__name__}: {str(e)[:200]}"
+        _log.debug("Mongo ping failed: %s", _last_ping_err)
+        return False
+
+
+async def _get_mongo_async():
+    global _mongo_client, _mongo_available
+    if not _AUDIT_MONGO_ENABLED:
+        _mongo_available = False
+        return _mongo_client, False
+    if _mongo_client is None:
+        try:
+            from motor.motor_asyncio import AsyncIOMotorClient
+            _mongo_client = AsyncIOMotorClient(_AUDIT_MONGO_URI, serverSelectionTimeoutMS=3000)
+        except ImportError:
+            _log.warning("motor not installed - audit log uses file-only mode")
+            _mongo_available = False
+            return None, False
+        except Exception as e:
+            _log.warning("MongoDB client construct failed: %s", e)
+            _mongo_client = None
+            _mongo_available = False
+            _last_ping_err = str(e)[:200]
+            return None, False
+    if await _verify_mongo(_mongo_client):
+        if not _mongo_available:
+            _log.info("Audit MongoDB reachable: %s/%s", _AUDIT_DB, _AUDIT_COLLECTION)
+        _mongo_available = True
+        return _mongo_client, True
+    _mongo_available = False
+    return _mongo_client, False
 
 
 def _get_mongo():
@@ -57,14 +125,15 @@ def _get_mongo():
 
 
 async def write_audit_entry(entry: dict) -> bool:
-    """Write an audit entry to MongoDB (primary) and file (backup).
+    """Write audit entry: MongoDB (primary) AND file (backup).
 
-    Args:
-        entry: Audit entry dict with keys: timestamp, session_id, action,
-               input_length, compliance_level, user_role, ip_hash, extra
+    Returns True if written to MongoDB, False if file-only.
 
-    Returns:
-        True if written to MongoDB, False if file-only
+    R6.66.3:
+      - Uses async ping-verified client (_get_mongo_async) instead of trusting
+        a bare AsyncIOMotorClient ctor (motor's connect is lazy).
+      - AUDIT_MONGO_ENABLED env flag can fully opt out (skips client creation).
+      - Captures real ping/write errors into _last_ping_err for /health endpoint.
     """
     # Ensure required fields
     entry.setdefault("timestamp", datetime.datetime.utcnow())
@@ -72,35 +141,39 @@ async def write_audit_entry(entry: dict) -> bool:
     entry.setdefault("action", "unknown")
     entry.setdefault("compliance_level", os.getenv("COMPLIANCE_LEVEL", "moderate"))
 
-    # File backup (always)
+    # File backup (always; survives Mongo outage)
     try:
         log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, "compliance_audit.log")
         with open(log_path, "a", encoding="utf-8") as f:
             entry_copy = entry.copy()
-            entry_copy["timestamp"] = entry_copy["timestamp"].isoformat() + "Z" if hasattr(entry_copy["timestamp"], "isoformat") else str(entry_copy["timestamp"])
+            ts = entry_copy["timestamp"]
+            if hasattr(ts, "isoformat"):
+                entry_copy["timestamp"] = ts.isoformat() + "Z"
+            else:
+                entry_copy["timestamp"] = str(ts)
             f.write(json.dumps(entry_copy, default=str) + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        _log.debug("File audit write failed: %s", e)
 
-    # MongoDB primary
-    client, available = _get_mongo()
+    # MongoDB primary (R6.66.3: ping-verified async)
+    if not _AUDIT_MONGO_ENABLED:
+        return False
+    client, available = await _get_mongo_async()
     if not available or client is None:
         return False
 
     try:
         db = client[_AUDIT_DB]
-        # Convert datetime for MongoDB
-        if isinstance(entry.get("timestamp"), datetime.datetime):
-            pass  # motor handles datetime natively
         await db[_AUDIT_COLLECTION].insert_one(entry)
         return True
     except Exception as e:
+        global _last_ping_err, _mongo_available
+        _last_ping_err = f"write: {type(e).__name__}: {str(e)[:200]}"
         _log.debug("MongoDB audit write failed: %s", e)
+        _mongo_available = False  # force re-ping next time
         return False
-
-
 async def check_alerts(entry: dict) -> List[dict]:
     """Check audit entry against alert thresholds. Returns list of triggered alerts."""
     client, available = _get_mongo()

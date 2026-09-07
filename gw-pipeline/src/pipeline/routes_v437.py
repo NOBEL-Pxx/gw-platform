@@ -173,6 +173,18 @@ def register_routes(app):
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    # R6.66.3: Mongo audit health endpoint
+    @app.get("/pipeline/admin/audit/health")
+    async def audit_health(request: Request):
+        """R6.66.3: lightweight Mongo audit health snapshot."""
+        try:
+            from .audit_mongo import get_health
+            return get_health()
+        except ImportError:
+            return {"error": "audit module not available"}
+        except Exception as e:
+            return {"error": str(e)}
+
     # ── Batch Scheduler (Fix #8) ────────────────────────────────────────────
 
     @app.post("/pipeline/batch/submit")
