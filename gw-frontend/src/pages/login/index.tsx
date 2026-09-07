@@ -111,16 +111,27 @@ export default function LoginPage() {
         bordered={false}
       >
         <div className='text-center mb-6'>
-          <img
-            src='/gw-logo.png'
-            alt='AliCPT DIVS Logo'
-            className='mx-auto mb-2'
-            style={{
-              width: 'min(240px, 60vw)',
-              height: 'auto',
-              filter: 'drop-shadow(0 0 30px rgba(0,240,255,0.35))',
-            }}
-          />
+          <picture>
+            <source
+              srcSet='/Logo_for_AliCPT-display.webp'
+              type='image/webp'
+            />
+            <img
+              src='/Logo_for_AliCPT.png'
+              alt='AliCPT DIVS Logo'
+              className='mx-auto mb-2'
+              width={240}
+              height={120}
+              loading='eager'
+              fetchPriority='high'
+              decoding='async'
+              style={{
+                width: 'min(240px, 60vw)',
+                height: 'auto',
+                filter: 'drop-shadow(0 0 30px rgba(0,240,255,0.35))',
+              }}
+            />
+          </picture>
           <Text className='!text-white/55 text-sm tracking-wider font-semibold'>
             Astronomical Data Platform
           </Text>

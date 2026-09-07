@@ -138,6 +138,13 @@ const DATA_INVENTORY = [
 ]
 
 export default function SettingsPage() {
+  // R6.77: dynamic Access URL (was hardcoded 'https://alicpt.lhr.life')
+  //   Priority: VITE_PUBLIC_BASE_URL env override > window.location.origin > localhost:6002
+  const accessUrl = (import.meta as any).env?.VITE_PUBLIC_BASE_URL
+    || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:6002');
+  const accessUrlNote = accessUrl.includes('localhost:6002')
+    ? '(local dev)'
+    : (accessUrl.includes('alicpt.lhr.life') ? '(canonical)' : '(this server)');
   return (
     <div className='h-full overflow-auto' style={{ background: 'transparent' }}>
       <div className='max-w-3xl mx-auto p-6 space-y-5'>
@@ -229,10 +236,10 @@ export default function SettingsPage() {
                   color: '#00F0FF',
                 }}
               >
-                https://alicpt.lhr.life
+                {accessUrl}
               </code>
               <Text className='text-white/40 text-xs ml-2'>
-                (or localhost:6002)
+                {accessUrlNote}
               </Text>
             </Descriptions.Item>
             <Descriptions.Item label='Design Theme'>
