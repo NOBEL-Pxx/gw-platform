@@ -7,11 +7,26 @@
 # security-headers.conf / csp-header.conf → included per server block
 # ═══════════════════════════════════════════════════════════════════════════
 
-# CORS origin validation
+# R6.72 #1: CORS origin validation tightened.
+# Before (v4.7-R6.71): wildcard `~^https?://.*$` matched any HTTP/HTTPS,
+#         fell back to NGINX_CORS_DOMAIN env. Compose default was empty
+#         (= no CORS effectively), but the regex was a footgun: a future
+#         NGINX_CORS_DOMAIN=https://*.example.com would silently allow all
+#         subdomains.
+# After: explicit comma-separated whitelist via NGINX_CORS_ALLOWED_ORIGINS.
+#         Set in compose env: NGINX_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+#         Empty default = CORS locked down (dev: only localhost allowed).
+#         NGINX_CORS_DOMAIN kept for single-origin backward compat (no regex).
+#
+# Implementation: nginx `map` is first-match-wins. Each line is a regex;
+#                 empty `default` means no Access-Control-Allow-Origin header.
 map $http_origin $cors_origin {
     default "";
     "~^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$" "$http_origin";
-    "~^https?://.*$" "${NGINX_CORS_DOMAIN}";
+    # R6.72: explicit list via NGINX_CORS_ALLOWED_ORIGINS (comma-separated, no spaces)
+    "~^(${NGINX_CORS_ALLOWED_ORIGINS})$" "$http_origin";
+    # R6.72 legacy: single NGINX_CORS_DOMAIN (exact match, no wildcards)
+    "~^${NGINX_CORS_DOMAIN}$" "${NGINX_CORS_DOMAIN}";
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
