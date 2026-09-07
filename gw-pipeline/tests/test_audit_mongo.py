@@ -275,6 +275,34 @@ def test_wrap_highlight_regex_special_chars(audit_module):
     assert wrapped == "user**.**email = foo.bar"  # first literal dot wrapped
 
 
+def test_safe_int_env_default(audit_module):
+    """Case 18 (R6.67 hotfix): _safe_int_env returns default when env is unset."""
+    import os
+    os.environ.pop("AUDIT_TTL_DAYS", None)
+    result = audit_module._safe_int_env("AUDIT_TTL_DAYS", 90)
+    assert result == 90
+
+
+def test_safe_int_env_invalid_falls_back(audit_module, caplog):
+    """Case 19 (CRITICAL #3 hotfix): invalid env like '90d' falls back to default."""
+    import os, logging
+    os.environ["AUDIT_TTL_DAYS"] = "90d"
+    with caplog.at_level(logging.WARNING):
+        result = audit_module._safe_int_env("AUDIT_TTL_DAYS", 90)
+    assert result == 90
+    # Verify warning was logged (don't pin exact message)
+    assert any("AUDIT_TTL_DAYS" in rec.message for rec in caplog.records)
+
+
+def test_safe_int_env_explicit_value(audit_module):
+    """Case 20 (R6.67 hotfix): _safe_int_env respects a valid integer string."""
+    import os
+    os.environ["AUDIT_TTL_DAYS"] = "30"
+    result = audit_module._safe_int_env("AUDIT_TTL_DAYS", 90)
+    assert result == 30
+    os.environ.pop("AUDIT_TTL_DAYS", None)
+
+
 # Helper: provide a pytest config in case conftest is absent
 def pytest_configure(config):
     config.addinivalue_line(

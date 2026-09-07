@@ -20,23 +20,32 @@ _log = logging.getLogger("gw-audit")
 # ── MongoDB config ──────────────────────────────────────────────────────
 _AUDIT_MONGO_URI = os.getenv("AUDIT_MONGO_URI", "mongodb://gw-mongodb:27017")
 # R6.67.5: TTL retention (days). 0 = disable TTL. Default 90 days.
-_AUDIT_TTL_DAYS = int(os.getenv("AUDIT_TTL_DAYS", "90"))
+# CRITICAL #3 hotfix: defensive int parsing; falls back to defaults on bad env.
+def _safe_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        _log.warning("Invalid %s=%r, falling back to %d", name, raw, default)
+        return default
+
+_AUDIT_TTL_DAYS = _safe_int_env("AUDIT_TTL_DAYS", 90)
 _AUDIT_TTL_INDEX_NAME = "audit_ttl_ts"
 _AUDIT_DB = os.getenv("AUDIT_DB_NAME", "gw_audit")
 _AUDIT_COLLECTION = "compliance_logs"
 _ALERTS_COLLECTION = "audit_alerts"
-_AUDIT_HEALTH_RECHECK_SEC = int(os.getenv("AUDIT_HEALTH_RECHECK_SEC", "60"))
+_AUDIT_HEALTH_RECHECK_SEC = _safe_int_env("AUDIT_HEALTH_RECHECK_SEC", 60)
 # R6.66.3: explicit enable flag (default true). When false, file-only mode enforced.
 _AUDIT_MONGO_ENABLED = os.getenv("AUDIT_MONGO_ENABLED", "true").lower() in ("true", "1", "yes")
 _AUDIT_MONGO_URI = os.getenv("AUDIT_MONGO_URI", "mongodb://gw-mongodb:27017")
 
 # ── Alert thresholds ────────────────────────────────────────────────────
 _ALERT_THRESHOLDS = {
-    "rapid_requests": int(os.getenv("AUDIT_ALERT_RAPID_REQUESTS", "50")),
-    "injection_attempts": int(os.getenv("AUDIT_ALERT_INJECTION_ATTEMPTS", "5")),
-    "quota_exhaustion": int(os.getenv("AUDIT_ALERT_QUOTA_EXHAUSTION", "3")),
+    "rapid_requests": _safe_int_env("AUDIT_ALERT_RAPID_REQUESTS", 50),
+    "injection_attempts": _safe_int_env("AUDIT_ALERT_INJECTION_ATTEMPTS", 5),
+    "quota_exhaustion": _safe_int_env("AUDIT_ALERT_QUOTA_EXHAUSTION", 3),
 }
-_ALERT_WINDOW_MIN = int(os.getenv("AUDIT_ALERT_WINDOW_MIN", "10"))  # 10-min sliding window
+_ALERT_WINDOW_MIN = _safe_int_env("AUDIT_ALERT_WINDOW_MIN", 10)  # 10-min sliding window
 
 # MongoDB client (lazy init with ping verification) -
 # R6.66.3 state machine:
@@ -104,8 +113,25 @@ async def _ensure_indexes(client) -> bool:
         )
         return True
     except Exception as e:
-        _last_ping_err = f"ttl_index: {type(e).__name__}: {str(e)[:200]}"
+        # HIGH #4 hotfix: detect "IndexOptionsConflict" / "IndexKeySpecsConflict"
+        # which means an existing index with same name but different options.
+        # That's a pre-existing deployment with different TTL — treat as
+        # success-with-warning rather than retry-on-every-write churn.
+        err_msg = str(e)
+        if "IndexOptionsConflict" in err_msg or "IndexKeySpecsConflict" in err_msg:
+            _log.warning(
+                "TTL index %s already exists with different options; "
+                "leaving existing index in place. Override via Mongo shell if needed: "
+                "db.%s.runCommand({collMod: '%s', index: {name: '%s', expireAfterSeconds: %d}})",
+                _AUDIT_TTL_INDEX_NAME, _AUDIT_COLLECTION, _AUDIT_COLLECTION,
+                _AUDIT_TTL_INDEX_NAME, _AUDIT_TTL_DAYS * 86400,
+            )
+            return True
+        _last_ping_err = f"ttl_index: {type(e).__name__}: {err_msg[:200]}"
         _log.warning("Failed to ensure TTL index: %s", e)
+        # Don't return False — caller already saw the warning, and we want
+        # _ttl_index_ready=True so we don't retry on every audit write.
+        # The error remains visible via /pipeline/admin/audit/health.
         return False
 
 

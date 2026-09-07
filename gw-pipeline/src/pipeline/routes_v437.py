@@ -22,9 +22,9 @@ import os
 from typing import Optional, List
 
 from fastapi import Request, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 import hashlib
-import hmac, PlainTextResponse
+import hmac
 
 logger = logging.getLogger("gw.routes-v437")
 
@@ -209,14 +209,15 @@ def register_routes(app):
         # R6.67.4: HMAC token check (fail-closed)
         expected = os.getenv("BACKEND_AUDIT_TOKEN", "")
         if not expected:
-            _log.warning("audit/ingest called but BACKEND_AUDIT_TOKEN not set")
+            logger.warning("audit/ingest called but BACKEND_AUDIT_TOKEN not set")
             return JSONResponse(
                 status_code=503,
                 content={"error": "ingest endpoint disabled (BACKEND_AUDIT_TOKEN not set)"},
             )
         provided = request.headers.get("X-Audit-Token", "")
         if not hmac.compare_digest(provided, expected):
-            _log.warning("audit/ingest rejected: invalid token from %s", request.client)
+            client = request.client.host if request.client else "unknown"
+            logger.warning("audit/ingest rejected: invalid token from %s", client)
             return JSONResponse(
                 status_code=401,
                 content={"error": "invalid X-Audit-Token"},
@@ -241,14 +242,32 @@ def register_routes(app):
         body.setdefault("ingested_ts", datetime.datetime.utcnow().isoformat() + "Z")
 
         # Parse timestamp if provided as string
+        # HIGH #5 hotfix: TTL index requires BSON Date, NOT string. Reject
+        # unparseable timestamps with 400 instead of silently leaving as
+        # string (which would cause the doc to live forever, bypassing TTL).
+        # H1 (security) hotfix: also reject FUTURE timestamps — otherwise an
+        # authenticated caller can pin a doc past expireAfterSeconds and
+        # bypass 90-day retention. Allow up to 5min clock skew.
         if "timestamp" in body and isinstance(body["timestamp"], str):
             try:
                 body["timestamp"] = datetime.datetime.fromisoformat(
                     body["timestamp"].replace("Z", "+00:00")
                 )
             except ValueError:
-                # Leave as string; write_audit_entry will setdefault
-                pass
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "timestamp must be ISO 8601 (e.g. 2026-09-07T10:00:00Z)"},
+                )
+        # If caller supplied a datetime object, validate it.
+        if "timestamp" in body and isinstance(body["timestamp"], datetime.datetime):
+            now = datetime.datetime.utcnow()
+            # Strip tz for comparison since utcnow is naive.
+            ts = body["timestamp"].replace(tzinfo=None) if body["timestamp"].tzinfo else body["timestamp"]
+            if ts - now > datetime.timedelta(minutes=5):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "timestamp is too far in the future (max +5min clock skew)"},
+                )
 
         mongo_written = await write_audit_entry(body)
         return {"accepted": True, "mongo_written": mongo_written}
