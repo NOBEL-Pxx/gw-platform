@@ -8,16 +8,22 @@ Sync local code to ZhiJiang Lab remote server via SSH bastion.
 R6.52: detects requirements.txt diff -> auto-triggers `docker compose build`
        before `docker cp`, so new Python deps are baked into the image.
 
+R6.67.1 follow-up (#4): also upload Dockerfile + docker-entrypoint.sh + nginx.conf
+       (was previously skipped — required manual upload, broke deploy when
+       Docker layer baked old entrypoint). Strip Windows CRLF on shell scripts
+       so busybox sh on zjlab doesn't choke on `#!/bin/sh\r` shebang.
+
 Usage:
   python sync-to-zjlab.py          # Full sync
   python sync-to-zjlab.py frontend # Frontend only
   python sync-to-zjlab.py pipeline # Python modules only
   python sync-to-zjlab.py config   # Nginx config only
   python sync-to-zjlab.py jar      # Backend JAR only (after mvn package)
+  python sync-to-zjlab.py frontend --no-infra  # Legacy: build/ only
 
 Bastion: 192.168.10.10:60022 -> 10.107.207.103:22
 """
-import paramiko, time, os, sys, io, subprocess, hashlib
+import paramiko, time, os, sys, io, subprocess, hashlib, argparse
 
 # === Configuration ===
 BASTION = ('192.168.10.10', 60022, 'ZJWB260819', 'Temp@ecf4f6')
@@ -46,6 +52,99 @@ def connect():
     return ba, tg, sftp
 
 
+# === R6.67.1 #4: helpers for infra-file sync (Dockerfile, entrypoint, etc.) ===
+def _upload_text_file(sftp, local_path, remote_path, strip_crlf=False, executable=False):
+    """Upload a text file via SFTP, optionally stripping Windows CRLF.
+
+    R6.67.1: Windows CRLF on shell scripts (e.g. `#!/bin/sh\r`) breaks busybox
+    sh on the remote container — it parses `\r` as part of the interpreter
+    name and fails with 'no such file or directory'. Strip CRLF before upload.
+
+    Returns the number of bytes uploaded.
+    """
+    raw = open(local_path, 'rb').read()
+    if strip_crlf:
+        cleaned = raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+        if cleaned != raw:
+            print('  [CRLF strip] {}: {}B -> {}B'.format(
+                os.path.basename(local_path), len(raw), len(cleaned)))
+        raw = cleaned
+    with sftp.open(remote_path, 'wb') as f:
+        f.write(raw)
+    if executable:
+        sftp.chmod(remote_path, 0o755)
+    print('  [upload] {} -> {} ({}B{})'.format(
+        os.path.basename(local_path), remote_path, len(raw),
+        ', +x' if executable else ''))
+    return len(raw)
+
+
+def _upload_binary_file(sftp, local_path, remote_path):
+    """Upload a binary file via SFTP (preserves bytes verbatim).
+
+    Use for Dockerfile, nginx.conf, ssl/*.pem, etc. — anything that is not a
+    shell script (no CRLF strip) and not HTML/JS (no special processing).
+    """
+    raw = open(local_path, 'rb').read()
+    with sftp.open(remote_path, 'wb') as f:
+        f.write(raw)
+    print('  [upload] {} -> {} ({}B binary)'.format(
+        os.path.basename(local_path), remote_path, len(raw)))
+    return len(raw)
+
+
+def _sync_frontend_infra(tg, sftp):
+    """R6.67.1 #4: sync Dockerfile + docker-entrypoint.sh + nginx.conf + ssl/
+    for gw-frontend in addition to build/.
+
+    Why: Dockerfile changes never reached zjlab via the old sync (which only
+    uploaded build/). When entrypoint was updated locally, the running
+    container kept the OLD entrypoint — busybox sh then failed with
+    'no such file or directory' because the old entrypoint called `crond`
+    which was removed in the new version.
+
+    Strips CRLF on shell scripts before upload.
+    """
+    gw_dir = os.path.join(LOCAL_ROOT, 'gw-frontend')
+    remote_dir = '{}/gw-frontend'.format(REMOTE_ROOT)
+
+    # Make sure target dirs exist (build/ already done; we add root + ssl/)
+    tg.exec_command('mkdir -p {}/ssl'.format(remote_dir), timeout=5)
+    time.sleep(0.5)
+
+    # (local_name, remote_name, strip_crlf, executable)
+    infra_files = [
+        ('Dockerfile',           'Dockerfile',           False, False),
+        ('docker-entrypoint.sh', 'docker-entrypoint.sh', True,  True),
+        ('nginx.conf',           'nginx.conf',           False, False),
+        ('nginx-reload-watcher.sh', 'nginx-reload-watcher.sh', True, True),
+    ]
+
+    uploaded = 0
+    for local_name, remote_name, strip_crlf, executable in infra_files:
+        src_path = os.path.join(gw_dir, local_name)
+        if not os.path.exists(src_path):
+            print('  [skip] {} does not exist'.format(local_name))
+            continue
+        dst = '{}/{}'.format(remote_dir, remote_name)
+        _upload_text_file(sftp, src_path, dst,
+                          strip_crlf=strip_crlf, executable=executable)
+        uploaded += 1
+
+    # ssl/ directory (binary preserve — certs must not be CRLF-stripped)
+    ssl_dir = os.path.join(gw_dir, 'ssl')
+    if os.path.isdir(ssl_dir):
+        for fname in os.listdir(ssl_dir):
+            fpath = os.path.join(ssl_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            dst = '{}/ssl/{}'.format(remote_dir, fname)
+            _upload_binary_file(sftp, fpath, dst)
+            uploaded += 1
+
+    print('[frontend-infra] Uploaded {} infra files'.format(uploaded))
+
+
 def sync_frontend(tg, sftp):
     print('[frontend] Building...')
     os.chdir(os.path.join(LOCAL_ROOT, 'gw-frontend'))
@@ -71,6 +170,10 @@ def sync_frontend(tg, sftp):
             except:
                 pass
     print('[frontend] Uploaded {} files'.format(count))
+
+    # R6.67.1 #4: also upload Dockerfile + entrypoint + nginx config
+    if WITH_INFRA:
+        _sync_frontend_infra(tg, sftp)
 
     print('[frontend] Deploying...')
     tg.exec_command('docker exec gw-frontend find /usr/share/nginx/html/assets -type f -delete', timeout=10)
@@ -234,13 +337,22 @@ def sync_pipeline(tg, sftp):
             count += 1
     # Also upload requirements.txt + Dockerfile so docker compose build
     # picks up new Python deps on the next rebuild.
+    # R6.67.1 #4: Dockerfile uses CRLF stripping so Windows-edited Dockerfiles
+    # don't get `\r` injected into RUN lines (which would break shell parsing).
     gw_root = os.path.join(LOCAL_ROOT, 'gw-pipeline')
     for extra in ['requirements.txt', 'Dockerfile']:
         src_path = os.path.join(gw_root, extra)
-        if os.path.exists(src_path):
-            sftp.put(src_path, '{}/gw-pipeline/{}'.format(REMOTE_ROOT, extra))
-            count += 1
-            print('[pipeline] uploaded {} ({} bytes)'.format(extra, os.path.getsize(src_path)))
+        if not os.path.exists(src_path):
+            continue
+        dst = '{}/gw-pipeline/{}'.format(REMOTE_ROOT, extra)
+        if extra == 'Dockerfile':
+            # Dockerfile: strip CRLF (safe — Dockerfile lines don't need CR)
+            _upload_text_file(sftp, src_path, dst, strip_crlf=True)
+        else:
+            # requirements.txt: binary upload (no CRLF strip)
+            _upload_binary_file(sftp, src_path, dst)
+        count += 1
+        print('[pipeline] uploaded {} ({} bytes)'.format(extra, os.path.getsize(src_path)))
     print('[pipeline] Uploaded {} files'.format(count))
 
     if needs_rebuild:
@@ -319,8 +431,28 @@ def verify(tg):
 
 # === Main ===
 if __name__ == '__main__':
+    # R6.67.1 #4: parse --with-infra / --no-infra (default ON).
+    # We support both `python sync-to-zjlab.py frontend` (positional mode arg)
+    # AND the new flags, so existing muscle memory keeps working.
+    parser = argparse.ArgumentParser(
+        description='Sync local code to ZhiJiang Lab remote server via SSH bastion.',
+        add_help=True,
+    )
+    parser.add_argument('mode', nargs='?', default='full',
+                        choices=['full', 'frontend', 'pipeline', 'config', 'jar'],
+                        help='Sync mode (default: full)')
+    parser.add_argument('--with-infra', dest='with_infra', action='store_true',
+                        default=True,
+                        help='Upload Dockerfile + docker-entrypoint.sh + nginx.conf + ssl/ '
+                             'in addition to build/ (default: enabled).')
+    parser.add_argument('--no-infra', dest='with_infra', action='store_false',
+                        help='Skip infra file upload (legacy behavior — only build/).')
+    args = parser.parse_args()
+    MODE = args.mode
+    WITH_INFRA = args.with_infra
+
     print('=' * 50)
-    print('GW Sync v4.39  |  Mode: {}'.format(MODE))
+    print('GW Sync v4.39  |  Mode: {}  |  Infra: {}'.format(MODE, 'ON' if WITH_INFRA else 'OFF'))
     print('=' * 50)
 
     ba, tg, sftp = connect()
