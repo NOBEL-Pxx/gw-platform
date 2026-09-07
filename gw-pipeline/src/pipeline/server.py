@@ -41,6 +41,8 @@ from .dl_inference import (
 )
 # v4.35: RBAC middleware (Fix #1)
 from .rbac import RBACMiddleware, get_role_quota
+# R6.73 #2: IP whitelist middleware (defense-in-depth, runs BEFORE RBAC)
+from .middleware.ip_whitelist import IPWhitelistMiddleware
 # v4.35: MongoDB audit (Fix #6)
 from .audit_mongo import (
     write_audit_entry, check_alerts, query_audit_logs,
@@ -84,6 +86,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# R6.73 #2: Register IP whitelist FIRST (rejects bad IPs before JWT verify).
+# Order matters: Starlette runs middlewares in REVERSE add order,
+# so this last-added middleware runs first.
+app.add_middleware(IPWhitelistMiddleware)
 # v4.35: Register RBAC middleware (Fix #1)
 app.add_middleware(RBACMiddleware)
 # v4.37: Register security + operations routes
