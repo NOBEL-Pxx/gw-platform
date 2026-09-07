@@ -33,10 +33,10 @@
 // Vite-typed env access (vite/client provides ImportMetaEnv types)
 const SENTRY_DSN: string | undefined = import.meta.env.VITE_SENTRY_DSN
 const SENTRY_PACKAGE = '@sentry/react' // string variable avoids build-time resolution
-// R6.57: APP_VERSION injected at build time via vite.config.ts define.
-// Fallback chain: VITE_APP_VERSION (build-time) -> hardcoded 'v4.62+R6.57' (dev fallback).
-const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || 'v4.62+R6.69'
-const APP_ENV: string = import.meta.env.MODE || 'production'
+// R6.71: APP_VERSION/APP_ENV resolved from shared ./version module (was inline).
+// Build-time: vite.config.ts `define:` injects via JSON.stringify.
+// Dev fallback: 'v4.62+R6.69' when no git tags + no env var.
+import { APP_VERSION, APP_ENV } from './version'
 
 // Minimal Sentry capture interface — only the methods we use. Avoids `any`
 // while still being compatible with the real @sentry/react API surface.

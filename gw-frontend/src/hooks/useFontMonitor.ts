@@ -6,16 +6,17 @@
 
 import { useEffect } from 'react'
 import { captureFontError, initSentry } from '../sentry'
+// R6.71: APP_VERSION + APP_ENV resolved from shared module (was hardcoded here).
+import { APP_VERSION, APP_ENV } from '../version'
 
 const ERROR_KEY = 'gw-font-errors' // last 50 (R6.43 backward compat)
 const REPORT_URL = '/pipeline/observability/font-errors'
-const APP_VERSION = 'v4.62+R6.69'
 interface WindowWithEnv extends Window {
   GW_APP_ENV?: string
 }
-const APP_ENV =
+const _APP_ENV_OVERRIDE =
   (typeof window !== 'undefined' && (window as WindowWithEnv).GW_APP_ENV) ||
-  'production'
+  APP_ENV
 interface FontError {
   family: string
   weight: string
@@ -71,7 +72,7 @@ export function useFontMonitor(): void {
         url: window.location.href,
         userAgent: navigator.userAgent,
         version: APP_VERSION,
-        env: APP_ENV,
+        env: _APP_ENV_OVERRIDE,
       }
       // Local fallback (R6.43 backward compat)
       const errors = JSON.parse(localStorage.getItem(ERROR_KEY) || '[]')
