@@ -28,6 +28,23 @@ services:
         limits: { cpus: '4.0', memory: 4G }
         reservations: { cpus: '1.0', memory: 1G }
 
+  # ── R6.71 #3: Redis with optional AUTH (defense-in-depth) ──
+  # Inherits base image + volumes + healthcheck from docker-compose.yml.
+  # Overrides command to add --requirepass if REDIS_PASSWORD env is set.
+  # On zjlab: set REDIS_PASSWORD in /home/zjlab/gravitationalwave-v4.31/.env
+  # (generate with: openssl rand -base64 32).
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
+
   # ── 应用层：仅 gw-net 内部通信，由 gw-frontend nginx 反代 ──
   gw-firefly:
     ports: []  # 清除 8080 映射 → nginx 反代 /firefly/
@@ -39,6 +56,10 @@ services:
       rate.limit.capacity: 30
       rate.limit.refill-minutes: 1
       JAVA_OPTS: "-Xms1g -Xmx3g"
+      # R6.71 #3: pass Redis password for Spring Data Redis + Bucket4j Lettuce
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
+      # R6.71 #3: embed password in Bucket4j URI (Lettuce reads from URI)
+      RATE_LIMIT_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379
     deploy:
       resources:
         limits: { cpus: '4.0', memory: 4G }
