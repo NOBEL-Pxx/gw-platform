@@ -54,5 +54,8 @@
     "vitest": "^5.0.0"
   },
   "prebuild": "npm run subset-fonts",
-  "subset-fonts:pages": "python scripts/subset-fonts.py --pages-only"
+  "subset-fonts:pages": "python scripts/subset-fonts.py --pages-only",
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }

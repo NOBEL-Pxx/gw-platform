@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import LogoFade from '@/components/LogoFade'
 import { useNavigate } from 'react-router-dom'
 import { Form, Input, Button, Card, Tabs, Typography } from 'antd'
 import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons'
@@ -56,89 +57,84 @@ export default function LoginPage() {
   }
 
   return (
-    <div className='min-h-screen flex items-center justify-center bg-nebula relative overflow-hidden animate-fade-in'>
+    <div
+      className='min-h-screen flex items-center justify-center relative overflow-hidden animate-fade-in'
+      style={{
+        background:
+          'radial-gradient(ellipse 80% 60% at 20% 20%, rgba(93,52,208,0.35) 0%, transparent 60%), radial-gradient(ellipse 70% 50% at 80% 30%, rgba(255,0,110,0.25) 0%, transparent 55%), radial-gradient(ellipse 90% 60% at 50% 90%, rgba(0,240,255,0.20) 0%, transparent 60%), linear-gradient(135deg, #050510 0%, #0A0820 50%, #060512 100%)',
+      }}
+    >
+      {/* R6.83: Aurora mesh conic overlay - the visual signature */}
       <div
-        className='fixed pointer-events-none z-0'
+        className='fixed inset-0 pointer-events-none z-0 opacity-30'
         style={{
-          left: mousePos.x - 150,
-          top: mousePos.y - 150,
-          width: 300,
-          height: 300,
           background:
-            'radial-gradient(circle, rgba(0,240,255,0.08) 0%, rgba(124,58,237,0.05) 40%, transparent 70%)',
-          borderRadius: '50%',
-          transition: 'left 0.15s ease-out, top 0.15s ease-out',
+            'conic-gradient(from 215deg at 30% 70%, #5D34D0 0deg, #FF006E 90deg, #00F0FF 180deg, #7C3AED 270deg, #5D34D0 360deg)',
+          filter: 'blur(80px)',
+          mixBlendMode: 'screen',
         }}
       />
 
+      {/* Mouse-tracked cyan-violet glow (parallax cursor cue) */}
       <div
-        className='fixed top-1/4 left-1/4 w-96 h-96 rounded-full animate-float'
+        className='fixed pointer-events-none z-0'
         style={{
+          left: mousePos.x - 200,
+          top: mousePos.y - 200,
+          width: 400,
+          height: 400,
           background:
-            'radial-gradient(circle, rgba(124,58,237,0.05) 0%, transparent 70%)',
-          animationDelay: '0s',
-        }}
-      />
-      <div
-        className='fixed bottom-1/4 right-1/4 w-80 h-80 rounded-full animate-float'
-        style={{
-          background:
-            'radial-gradient(circle, rgba(0,240,255,0.05) 0%, transparent 70%)',
-          animationDelay: '3s',
-        }}
-      />
-      <div
-        className='fixed top-1/2 right-1/3 w-64 h-64 rounded-full animate-float'
-        style={{
-          background:
-            'radial-gradient(circle, rgba(255,0,110,0.04) 0%, transparent 70%)',
-          animationDelay: '5s',
+            'radial-gradient(circle, rgba(0,240,255,0.10) 0%, rgba(124,58,237,0.06) 40%, transparent 70%)',
+          borderRadius: '50%',
+          transition: 'left 0.18s ease-out, top 0.18s ease-out',
         }}
       />
 
       <Card
         className='relative z-10 animate-slide-up'
         style={{
-          width: 'min(420px, 92vw)',
-          borderRadius: 20,
-          background: 'rgba(255,255,255,0.06)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          border: '1px solid rgba(255,255,255,0.14)',
+          width: 'min(440px, 92vw)',
+          borderRadius: 24,
+          background:
+            'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(124,58,237,0.04) 50%, rgba(0,240,255,0.03) 100%)',
+          backdropFilter: 'blur(28px)',
+          WebkitBackdropFilter: 'blur(28px)',
+          border: '1px solid rgba(255,255,255,0.16)',
           boxShadow:
-            '0 8px 40px rgba(0,0,0,0.5), 0 0 100px rgba(0,240,255,0.05)',
+            '0 12px 56px rgba(0,0,0,0.6), 0 0 120px rgba(0,240,255,0.08), inset 0 1px 0 rgba(255,255,255,0.10)',
         }}
         bordered={false}
       >
-        <div className='text-center mb-6'>
-          <picture>
-            <source
-              srcSet='/Logo_for_AliCPT-display.webp'
-              type='image/webp'
-            />
-            <img
-              src='/Logo_for_AliCPT.png'
-              alt='AliCPT DIVS Logo'
-              className='mx-auto mb-2'
-              width={240}
-              height={120}
-              loading='eager'
-              fetchPriority='high'
-              decoding='async'
-              style={{
-                width: 'min(240px, 60vw)',
-                height: 'auto',
-                filter: 'drop-shadow(0 0 30px rgba(0,240,255,0.35))',
-              }}
-            />
-          </picture>
-          <Text className='!text-white/55 text-sm tracking-wider font-semibold'>
+        <div className='text-center mb-7'>
+          <LogoFade size={120} alt='AliCPT DIVS Logo' className='!mb-4' />
+          <div
+            className='font-black tracking-tight leading-none select-none'
+            style={{
+              fontSize: 'clamp(28px, 6vw, 36px)',
+              background:
+                'linear-gradient(90deg, #00F0FF 0%, #7C3AED 50%, #FF006E 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              filter: 'drop-shadow(0 0 24px rgba(0,240,255,0.45))',
+              fontFamily:
+                '"Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, sans-serif',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            AliCPT DIVS
+          </div>
+          <Text
+            className='!text-white/55 text-sm tracking-wider font-semibold'
+            style={{ marginTop: 8, display: 'block' }}
+          >
             Astronomical Data Platform
           </Text>
           <div
-            className='mt-3 mx-auto w-16 h-0.5 rounded'
+            className='mt-4 mx-auto w-20 h-0.5 rounded-full'
             style={{
               background: 'linear-gradient(90deg, #00F0FF, #7C3AED, #FF006E)',
+              boxShadow: '0 0 12px rgba(0,240,255,0.6)',
             }}
           />
         </div>

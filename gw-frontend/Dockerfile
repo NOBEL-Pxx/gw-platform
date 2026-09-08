@@ -1,5 +1,19 @@
 # Build stage: Node.js
-FROM node:21.6.2-bullseye AS builder
+# R6.79: bump 21.6.2-bullseye -> 22.12.0-alpine.
+# Reason: rolldown@1.2.7 (vite@8.2.2 dep) imports `styleText` from node:util,
+# added in Node v21.7.0 (Aug 2024). node:21.6.2 (Jul 2024) is missing it.
+# Vite 8's engines constraint: `^20.19.0 || >=22.12.0`. We pick 22.12+ alpine
+# for smallest size + matches constraint. R6.79 also requires Python 3 +
+# fontTools for subset-fonts.py prebuild (see apk add below).
+FROM node:22.12.0-alpine AS builder
+
+# R6.79: subset-fonts.py (npm prebuild hook) needs Python 3 + fontTools + brotli.
+# - Python 3: not in alpine base, install via apk
+# - fontTools: char subsetting for woff2 generation (R6.44)
+# - brotli: woff2 compression backend used by fontTools
+#   (--break-system-packages needed because Alpine python is PEP 668 managed)
+RUN apk add --no-cache python3 py3-pip \
+    && pip install --no-cache-dir --break-system-packages fonttools brotli
 
 COPY package*.json ./
 RUN rm -f package-lock.json && npm install --registry=https://registry.npmjs.org/

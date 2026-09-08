@@ -7,11 +7,11 @@
 //         -> JSON.stringify(appVersion) -> `define:` injection
 //      c. Dev:  vite.config.ts resolves same way (if git tags exist) OR
 //         falls back to `v${pkg.version}+dev`
-//   2. Hardcoded fallback `'v4.62+R6.69'` - only used in dev when git tags
+//   2. Hardcoded fallback `'v4.63+R6.83'` - only used in dev when git tags
 //      don't exist AND pkg.version is missing AND no env var.
 //
 // Why a shared module instead of inline `import.meta.env` in sentry.ts:
-//   - Before R6.71: useFontMonitor.ts had `const APP_VERSION = 'v4.62+R6.69'`
+//   - Before R6.71: useFontMonitor.ts had `const APP_VERSION = 'v4.63+R6.83'`
 //     (pure hardcoded, no env lookup). One forgotten bump -> Sentry reports
 //     wrong release tag forever.
 //   - After R6.71: both sentry.ts and useFontMonitor.ts import from here.
@@ -19,7 +19,7 @@
 //     ONE place, not two.
 
 export const APP_VERSION: string =
-  import.meta.env.VITE_APP_VERSION || 'v4.62+R6.69'
+  import.meta.env.VITE_APP_VERSION || 'v4.63+R6.83'
 
 export const APP_ENV: string = import.meta.env.MODE || 'production'
 

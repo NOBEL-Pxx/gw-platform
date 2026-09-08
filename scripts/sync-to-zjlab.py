@@ -21,6 +21,7 @@ R6.82 (v4.41): Consolidate R6.79.f + R6.80 fixes into main script:
    - `_sync_frontend_root_hashdiff()`: hash-diff ALL root files in gw-frontend/
      (replaces hardcoded _sync_frontend_build_configs, now includes index.html)
    - `_frontend_post_rebuild_sanity_check()`: curl + grep version + 3 logo URLs
+   - `_backend_post_rebuild_sanity_check()`: port 8093 Spring Boot (v3/api-docs + swagger-ui; image alicpt-divs-gw-backend) (R6.83o)
      (catches stale-image regression in 1 second - prevents R6.78x 8h debug)
    - `verify()`: adds frontend version sanity check (must match local) (2026-09-08).
    - Add `--rebuild` flag to frontend mode: also uploads src/ + triggers
@@ -360,9 +361,82 @@ def _frontend_post_rebuild_sanity_check(tg):
     img_age = o.read().decode(errors='replace').strip()
     print('  [img] CreatedAt: {}'.format(img_age or 'NONE'))
 
-    overall = ok_version and logos_ok
+    # R6.83 (Layer 6): .env fingerprint check (detect secret drift, no content sync)
+    import hashlib
+    env_local_sha = None
+    env_local = os.path.join(LOCAL_ROOT, '.env')
+    if os.path.exists(env_local):
+        with open(env_local, 'rb') as f:
+            env_local_sha = hashlib.sha256(f.read()).hexdigest()[:12]
+    env_remote_sha = None
+    env_remote_exists = False
+    _, o, _ = tg.exec_command(
+        'test -f {}/.env && echo EXISTS || echo MISSING'.format(REMOTE_ROOT), timeout=5)
+    env_remote_exists = 'EXISTS' in o.read().decode(errors='replace')
+    if env_remote_exists:
+        _, o, _ = tg.exec_command(
+            'sha256sum {}/.env 2>/dev/null | cut -c1-12'.format(REMOTE_ROOT), timeout=5)
+        env_remote_sha = o.read().decode(errors='replace').strip() or None
+
+    env_ok = (env_local_sha is not None and env_remote_sha == env_local_sha) \
+        or (env_local_sha is None and not env_remote_exists)
+    if not env_ok:
+        print('  [env] DRIFT: local={} remote={} (manual sync required)'.format(
+            env_local_sha or 'NONE', env_remote_sha or 'MISSING'))
+    else:
+        print('  [env] OK (sha={})'.format(env_local_sha or 'NONE'))
+
+    overall = ok_version and logos_ok and env_ok
     print('[sanity-check] {}'.format('OK' if overall else 'FAILED'))
     return overall
+
+
+def _backend_post_rebuild_sanity_check(tg):
+    """R6.83o (v4.42): Post-rebuild backend sanity check (Spring Boot port 8093).
+
+    Catches stale-image regression for backend (mirrors R6.82 frontend check).
+
+    R6.83.3 assumed FastAPI (with /api/health, /docs, /openapi.json). R6.83o
+    discovered the backend is actually Spring Boot (alicpt-divs-gw-backend
+    image, container 'divs-backend'):
+      - /v3/api-docs         -> OpenAPI 3.0.1 spec
+      - /swagger-ui.html     -> Swagger UI redirect
+      - /swagger-ui/index.html -> Swagger UI page
+    Custom routes are /api/app/gravitationalwave/... (see /v3/api-docs).
+    No /api/health endpoint exists. The 'HTTP 500' on missing routes is
+    Spring's global error handler wrapping NoResourceFoundException —
+    cosmetic, not a real failure.
+
+    Why port 8093: per memory zjlab-3-port architecture (6001/6002/8093),
+    backend exposes Tomcat/Spring directly on 8093 (no nginx proxy).
+    """
+    print('[backend-sanity-check] Running post-rebuild backend sanity check...')
+
+    endpoints = [
+        ('/v3/api-docs', 'openapi-spec'),
+        ('/swagger-ui.html', 'swagger-ui-redirect'),
+        ('/swagger-ui/index.html', 'swagger-ui-page'),
+    ]
+    backend_ok = True
+    for path, name in endpoints:
+        _, o, _ = tg.exec_command(
+            'curl -skL -o /dev/null -w "%{{http_code}}" --max-time 5 '
+            'http://localhost:8093{}'.format(path), timeout=10)
+        code = o.read().decode(errors='replace').strip()
+        ok = code == '200'
+        if not ok:
+            backend_ok = False
+        print('  [{}] {} -> HTTP {}'.format(name, path, code))
+
+    # Check backend image mtime (Spring Boot container is 'divs-backend')
+    _, o, _ = tg.exec_command(
+        'docker images --format "{{.CreatedAt}}" alicpt-divs-gw-backend:latest',
+        timeout=10)
+    img_age = o.read().decode(errors='replace').strip()
+    print('  [img] CreatedAt: {}'.format(img_age or 'NONE'))
+
+    print('[backend-sanity-check] {}'.format('OK' if backend_ok else 'FAILED'))
+    return backend_ok
 
 
 # === R6.82 PATCH APPLIED ===
@@ -370,12 +444,17 @@ def _frontend_post_rebuild_sanity_check(tg):
 # Existing _sync_frontend_src continues below
 
 def _sync_frontend_src(tg, sftp):
-    """R6.79: Upload src/ recursively so `docker compose build` picks up
-    the latest source (was missing - only build/ was synced, image
-    was baked from Jul 24 stale src/, served v4.17).
+    """R6.79 + R6.83p: Upload src/ recursively so `docker compose build`
+    picks up the latest source (was missing - only build/ was synced,
+    image was baked from Jul 24 stale src/, served v4.17).
 
     Skips node_modules, dist, build, __pycache__ (not needed for build).
-    Skips files where local and remote size already match (cheap no-op).
+    Skips files where local and remote SHA256 already match.
+
+    R6.83p: was size-based skip — silently dropped uploads when version
+    strings ('v4.62+R6.69' -> 'v4.63+R6.83', same length) preserved file
+    size. Switched to SHA256 for byte-level correctness. ~10ms overhead
+    per file vs ~50-200ms network round-trip, negligible.
     """
     src_local = os.path.join(LOCAL_ROOT, 'gw-frontend', 'src')
     src_remote = '{}/gw-frontend/src'.format(REMOTE_ROOT)
@@ -388,7 +467,7 @@ def _sync_frontend_src(tg, sftp):
     tg.exec_command('mkdir -p {}'.format(src_remote), timeout=5)
     time.sleep(0.5)
 
-    count = {'uploaded': 0, 'same-size': 0, 'errors': 0}
+    count = {'uploaded': 0, 'same-sha': 0, 'errors': 0}
     skip_dirs = {'node_modules', 'dist', 'build', '__pycache__'}
     for root, dirs, files in os.walk(src_local):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
@@ -417,14 +496,19 @@ def _sync_frontend_src(tg, sftp):
                             sftp.mkdir(cur)
                         except Exception:
                             pass
-            # Upload (skip if same size)
-            local_size = os.path.getsize(local_path)
+            # R6.83p: SHA256-based skip (was size-based, missed byte-level edits)
+            import hashlib
+            with open(local_path, 'rb') as f:
+                local_sha = hashlib.sha256(f.read()).hexdigest()
             try:
-                remote_size = sftp.stat(remote_path).st_size
-                if remote_size == local_size:
-                    count['same-size'] += 1
+                _, o, _ = tg.exec_command(
+                    'sha256sum {} 2>/dev/null | cut -c1-64'.format(remote_path),
+                    timeout=5)
+                remote_sha = o.read().decode(errors='replace').strip()
+                if remote_sha == local_sha:
+                    count['same-sha'] += 1
                     continue
-            except IOError:
+            except Exception:
                 pass
             try:
                 sftp.put(local_path, remote_path)
@@ -434,8 +518,8 @@ def _sync_frontend_src(tg, sftp):
                 print('  [err] {}: {}'.format(rel, e))
             if count['uploaded'] % 30 == 0 and count['uploaded'] > 0:
                 print('  [progress] uploaded {} so far...'.format(count['uploaded']))
-    print('[frontend-src] uploaded={} same-size={} errors={}'.format(
-        count['uploaded'], count['same-size'], count['errors']))
+    print('[frontend-src] uploaded={} same-sha={} errors={}'.format(
+        count['uploaded'], count['same-sha'], count['errors']))
 
 
 def _sync_frontend_build_configs(sftp):
@@ -843,7 +927,9 @@ def verify(tg):
         print('[verify] {} -> HTTP {}'.format(label, code))
 
     # R6.82 (v4.41): Always run frontend sanity check (catches R6.78x-class regressions)
-    sanity_ok = _frontend_post_rebuild_sanity_check(tg)
+    frontend_sanity_ok = _frontend_post_rebuild_sanity_check(tg)
+    backend_sanity_ok = _backend_post_rebuild_sanity_check(tg)
+    sanity_ok = frontend_sanity_ok and backend_sanity_ok
     if not sanity_ok:
         ok = False
 

@@ -165,7 +165,7 @@ export default function LayoutWrapper() {
             AliCPT DIVS
           </span>
           <span className='text-xs text-white/40 mt-0.5 font-semibold'>
-            v4.62+R6.69
+            v4.63+R6.83
           </span>
         </Link>
 

@@ -1,9 +1,11 @@
 /**
  * R6.18: Splash overlay shown during initial prewarm of Multi-band Observation.
+ * R6.81: Logo fade-in + skeleton (no more broken-img flash on first paint)
  *
  * Visual:
  *   - Full overlay over MultiBandDataPanel
  *   - AliCPT cyan-violet gradient + animated ring (matches landing page)
+ *   - Logo: skeleton ring until image onLoad fires, then 320ms fade-in + scale
  *   - Progress: "Pre-loading 12 / 19 thumbnails..." (live count)
  *   - Auto-fades when `progress.pct >= 100` or `done === true`
  *
@@ -14,6 +16,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import LogoFade from './LogoFade'
 
 export interface PreloadSplashProps {
   visible: boolean
@@ -81,40 +84,20 @@ export default function PreloadSplash({
           border: '1px solid rgba(0,240,255,0.15)',
         }}
       >
-        {/* R6.33: logo replaces animated ring. Consistent with Info page logo. */}
-        <div
-          className='relative mx-auto mb-5'
-          style={{ width: 80, height: 80 }}
-        >
-          <div
-            className='absolute inset-0 rounded-full animate-ping opacity-25'
-            style={{ background: 'rgba(0,240,255,0.3)' }}
-          />
-          <picture>
-            <source srcSet='/Logo_for_AliCPT-splash.webp' type='image/webp' />
-            <img
-              src='/Logo_for_AliCPT-splash.png'
-              alt='AliCPT Logo'
-              className='absolute inset-0 m-auto object-contain'
-              width={80}
-              height={80}
-              loading='eager'
-              fetchPriority='high'
-              style={{ borderRadius: '50%' }}
-            />
-          </picture>
-        </div>
+        {/* R6.81: Logo with skeleton + fade-in. No more broken-img flash. */}
+        <LogoFade />
+
         <p
           className='text-white font-semibold tracking-wide mb-1'
           style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 14 }}
         >
-          {pct < 100 ? 'Preparing observation…' : 'Ready'}
+          {pct < 100 ? 'Preparing observation\u2026' : 'Ready'}
         </p>
         <p
           className='text-xs text-white/40 mb-4'
           style={{ fontFamily: '"JetBrains Mono", monospace' }}
         >
-          {pct}% — {done} / {total} assets cached
+          {pct}% \u2014 {done} / {total} assets cached
         </p>
 
         {/* Per-phase progress */}
