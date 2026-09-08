@@ -248,7 +248,29 @@ window.addEventListener('message', function(e) {
     }
   });
   setTimeout(hideStatus, 800);
+  setTimeout(hideStatus, 800);
 });
+
+// R6.85b: dedup rapid clicks on the same plot. Firefly's internal handler
+// opens a popup window per click — double-clicks stack. Suppress 2nd click
+// on the SAME plot within 500ms. Different plots are unaffected.
+(function() {
+  var lastClickedPlot = null;
+  var lastClickedAt = 0;
+  document.addEventListener('click', function(e) {
+    var plot = e.target && e.target.closest && e.target.closest('.plot-wrapper');
+    if (!plot) return;
+    var now = Date.now();
+    if (plot === lastClickedPlot && (now - lastClickedAt) < 500) {
+      e.stopPropagation();
+      e.preventDefault();
+      if (window.DEBUG) console.log('[Firefly] dedup click on plot', plot.id);
+      return;
+    }
+    lastClickedPlot = plot;
+    lastClickedAt = now;
+  }, true);  // capture phase: intercept BEFORE Firefly's bubble handler
+})();
 </script>
 </body>
 </html>

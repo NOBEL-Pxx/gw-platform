@@ -35,7 +35,7 @@ const SENTRY_DSN: string | undefined = import.meta.env.VITE_SENTRY_DSN
 const SENTRY_PACKAGE = '@sentry/react' // string variable avoids build-time resolution
 // R6.71: APP_VERSION/APP_ENV resolved from shared ./version module (was inline).
 // Build-time: vite.config.ts `define:` injects via JSON.stringify.
-// Dev fallback: 'v4.63+R6.83' when no git tags + no env var.
+// Dev fallback: 'v4.63+R6.85' when no git tags + no env var.
 import { APP_VERSION, APP_ENV } from './version'
 
 // Minimal Sentry capture interface — only the methods we use. Avoids `any`

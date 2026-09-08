@@ -114,12 +114,6 @@ export default function SettingsPage() {
   // R6.77: dynamic Access URL (VITE env > window.location.origin > localhost)
   const accessUrl = (import.meta as any).env?.VITE_PUBLIC_BASE_URL
     || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:6002')
-  const accessUrlNote = accessUrl.includes('localhost:6002')
-    ? 'local dev'
-    : accessUrl.includes('alicpt.lhr.life')
-      ? 'canonical'
-      : 'this server'
-
   return (
     <div
       className='h-full overflow-auto'
@@ -140,7 +134,7 @@ export default function SettingsPage() {
                 AliCPT DIVS
               </Title>
               <Tag color='cyan' className='font-semibold' style={{ margin: 0 }}>
-                v4.63+R6.83
+                v4.63+R6.85
               </Tag>
             </div>
             <Text className='text-white/50 text-sm'>Astronomical Data Platform</Text>
@@ -167,7 +161,6 @@ export default function SettingsPage() {
             >
               {accessUrl}
             </code>
-            <Tag color='default' style={{ margin: 0 }}>{accessUrlNote}</Tag>
           </div>
         </Card>
 
@@ -287,7 +280,7 @@ export default function SettingsPage() {
         {/* ============ Footer ============ */}
         <div className='text-center pt-1 pb-4'>
           <Text className='text-white/35 text-xs'>
-            AliCPT DIVS v4.63+R6.83 - Built with Aurora - (c) 2026
+            AliCPT DIVS v4.63+R6.85 - Built with Aurora - (c) 2026
           </Text>
         </div>
       </div>
