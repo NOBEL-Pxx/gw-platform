@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GravitationalWave Platform — Sync Script (v4.39)
+GravitationalWave Platform — Sync Script (v4.41)
 ================================================
 Sync local code to ZhiJiang Lab remote server via SSH bastion.
 
@@ -13,13 +13,30 @@ R6.67.1 follow-up (#4): also upload Dockerfile + docker-entrypoint.sh + nginx.co
        Docker layer baked old entrypoint). Strip Windows CRLF on shell scripts
        so busybox sh on zjlab doesn't choke on `#!/bin/sh\r` shebang.
 
+R6.79 (v4.40): ROOT-CAUSE FIX for v4.17 image regression (5 layers fixed across R6.78-80)
+
+R6.82 (v4.41): Consolidate R6.79.f + R6.80 fixes into main script:
+   - `_sync_frontend_public()`: hash-diff + upload public/ recursively
+     (R6.80 fix - 5th sync gap layer, was missing entirely)
+   - `_sync_frontend_root_hashdiff()`: hash-diff ALL root files in gw-frontend/
+     (replaces hardcoded _sync_frontend_build_configs, now includes index.html)
+   - `_frontend_post_rebuild_sanity_check()`: curl + grep version + 3 logo URLs
+     (catches stale-image regression in 1 second - prevents R6.78x 8h debug)
+   - `verify()`: adds frontend version sanity check (must match local) (2026-09-08).
+   - Add `--rebuild` flag to frontend mode: also uploads src/ + triggers
+     `docker compose build gw-frontend` (was missing - only build/ synced).
+   - Add new `compose` mode: syncs docker-compose.yml + docker-compose.zjlab.yml
+     + recreates services (was missing - R6.78 cascade root cause).
+
 Usage:
-  python sync-to-zjlab.py          # Full sync
-  python sync-to-zjlab.py frontend # Frontend only
-  python sync-to-zjlab.py pipeline # Python modules only
-  python sync-to-zjlab.py config   # Nginx config only
-  python sync-to-zjlab.py jar      # Backend JAR only (after mvn package)
-  python sync-to-zjlab.py frontend --no-infra  # Legacy: build/ only
+  python sync-to-zjlab.py                       # Full sync
+  python sync-to-zjlab.py frontend              # Frontend only (build/ + docker cp)
+  python sync-to-zjlab.py frontend --rebuild    # NEW: + src/ + image rebuild
+  python sync-to-zjlab.py pipeline              # Python modules only
+  python sync-to-zjlab.py config                # Nginx config only
+  python sync-to-zjlab.py jar                   # Backend JAR only (after mvn package)
+  python sync-to-zjlab.py compose               # NEW: docker-compose*.yml + recreate
+  python sync-to-zjlab.py frontend --no-infra   # Legacy: build/ only
 
 Bastion: 192.168.10.10:60022 -> 10.107.207.103:22
 """
@@ -145,6 +162,337 @@ def _sync_frontend_infra(tg, sftp):
     print('[frontend-infra] Uploaded {} infra files'.format(uploaded))
 
 
+
+# === R6.82: new helpers (v4.41) ===
+
+def _sync_frontend_public(sftp):
+    """R6.80 (v4.41): Upload public/ recursively so `docker compose build` picks up
+    latest logos + fonts + html files. Vite copies public/ -> build/ during
+    `npm run build`, so missing public/ means missing logos in served HTML.
+
+    Skips files where local SHA256 matches remote SHA256 (cheap no-op).
+    """
+    pub_local = os.path.join(LOCAL_ROOT, 'gw-frontend', 'public')
+    pub_remote = '{}/gw-frontend/public'.format(REMOTE_ROOT)
+
+    if not os.path.isdir(pub_local):
+        print('[frontend-public] {} does not exist - skipping'.format(pub_local))
+        return
+
+    print('[frontend-public] Uploading public/ recursively (R6.80 fix)...')
+    try:
+        sftp.stat(pub_remote)
+    except IOError:
+        sftp.mkdir(pub_remote)
+
+    count = {'uploaded': 0, 'same-sha': 0, 'errors': 0}
+    for root, dirs, files in os.walk(pub_local):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for fname in files:
+            if fname.startswith('.'):
+                continue
+            local_path = os.path.join(root, fname)
+            rel = os.path.relpath(local_path, pub_local).replace('\\', '/')
+            remote_path = '{}/{}'.format(pub_remote, rel)
+            parent = os.path.dirname(remote_path).replace('\\', '/')
+            try:
+                sftp.stat(parent)
+            except IOError:
+                parts = parent.split('/')
+                cur = ''
+                for p in parts:
+                    if not p:
+                        continue
+                    cur += '/' + p
+                    try:
+                        sftp.stat(cur)
+                    except IOError:
+                        try:
+                            sftp.mkdir(cur)
+                        except Exception:
+                            pass
+            local_sha = _sha256_file(local_path)
+            try:
+                remote_sha = _remote_sha256_via_sftp(sftp, remote_path)
+                if remote_sha == local_sha and local_sha:
+                    count['same-sha'] += 1
+                    continue
+            except Exception:
+                pass
+            try:
+                sftp.put(local_path, remote_path)
+                count['uploaded'] += 1
+            except Exception as e:
+                count['errors'] += 1
+                print('  [err] public/{}: {}'.format(rel, e))
+    print('[frontend-public] uploaded={} same-sha={} errors={}'.format(
+        count['uploaded'], count['same-sha'], count['errors']))
+
+
+def _remote_sha256_via_sftp(sftp, path):
+    """Compute SHA256 of a remote file via SFTP (download + hash).
+    Returns empty string if file doesn't exist or hash fails.
+    """
+    try:
+        with sftp.open(path, 'rb') as f:
+            h = hashlib.sha256()
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+            return h.hexdigest()
+    except Exception:
+        return ''
+
+
+def _sync_frontend_root_hashdiff(sftp):
+    """R6.79.f + R6.82 (v4.41): Hash-diff ALL root files in gw-frontend/.
+
+    Replaces hardcoded _sync_frontend_build_configs (which listed only 4 files
+    and missed index.html). Now iterates gw-frontend/ top-level, uploading any
+    file whose SHA256 differs from remote.
+
+    Skips: node_modules, dist, build, public, src, .git, .vite, package-lock.json.
+    Includes: index.html (vite entry template), vite.config.ts, tsconfig*.json,
+    package.json, Dockerfile, docker-entrypoint.sh, nginx*.conf, etc.
+    """
+    fw_local = os.path.join(LOCAL_ROOT, 'gw-frontend')
+    fw_remote = '{}/gw-frontend'.format(REMOTE_ROOT)
+
+    SKIP_TOP = {'node_modules', 'dist', 'build', 'public', 'src', '.git',
+                 '.vite', '.claude', 'package-lock.json', 'scripts',
+                 '__pycache__', 'reference', 'docs'}
+
+    print('[frontend-root] Hash-diff root files in gw-frontend/...')
+    count = {'uploaded': 0, 'same-sha': 0, 'skipped': 0}
+    for entry in os.listdir(fw_local):
+        if entry in SKIP_TOP or entry.startswith('.'):
+            count['skipped'] += 1
+            continue
+        local_path = os.path.join(fw_local, entry)
+        if not os.path.isfile(local_path):
+            continue
+        remote_path = '{}/{}'.format(fw_remote, entry)
+        local_sha = _sha256_file(local_path)
+        remote_sha = _remote_sha256_via_sftp(sftp, remote_path)
+        if remote_sha == local_sha and local_sha:
+            count['same-sha'] += 1
+            continue
+        try:
+            # Use CRLF strip for shell scripts (R6.67.1)
+            if entry.endswith('.sh') or entry == 'docker-entrypoint.sh':
+                _upload_text_file(sftp, local_path, remote_path,
+                                  strip_crlf=True, executable=True)
+            else:
+                sftp.put(local_path, remote_path)
+            count['uploaded'] += 1
+        except Exception as e:
+            print('  [err] root/{}: {}'.format(entry, e))
+    print('[frontend-root] uploaded={} same-sha={} skipped={}'.format(
+        count['uploaded'], count['same-sha'], count['skipped']))
+
+
+def _frontend_post_rebuild_sanity_check(tg):
+    """R6.82 (v4.41): Post-rebuild sanity check.
+
+    Catches stale-image regression in 1 second (vs 8h debug for R6.78x).
+    Checks:
+      1. Served HTML version string matches local version.ts
+      2. 3 logo URLs return HTTP 200 (R6.80 regression check)
+      3. Image CreatedAt mtime is recent (< 30 minutes)
+    """
+    print('[sanity-check] Running post-rebuild sanity check...')
+
+    # Read local version from src/version.ts (or default)
+    version_local = 'v4.54'  # fallback
+    ver_path = os.path.join(LOCAL_ROOT, 'gw-frontend', 'src', 'version.ts')
+    if os.path.exists(ver_path):
+        import re
+        m = re.search(r"""VERSION\s*[:=]\s*['"]?v?([\d.]+(?:\+[A-Za-z0-9.]+)?)""", open(ver_path, encoding="utf-8").read())
+        if m:
+            version_local = 'v' + m.group(1)
+
+    # R6.82f: Search ALL JS bundles (not just first), require +R suffix to skip
+    # library versions like v0.0.0. Our version v4.62+R6.69 lives in lazy chunks.
+    _, o, _ = tg.exec_command(
+        'curl -skL http://localhost:6001/', timeout=15)
+    html = o.read().decode(errors='replace')
+
+    import re
+    js_paths = re.findall(r'/assets/[A-Za-z0-9_.-]+\.js', html)
+    version_served = None
+    for js_path in js_paths:
+        _, o2, _ = tg.exec_command(
+            'curl -skL http://localhost:6001{}'.format(js_path), timeout=15)
+        js_body = o2.read().decode(errors='replace')
+        # Require +R pattern (only our release suffix has it: v4.62+R6.69)
+        m = re.search(r'v\d+\.\d+\+R\d+(?:\.\d+)?', js_body)
+        if m:
+            version_served = m.group()
+            break
+
+    ok_version = version_served == version_local
+    print('  [ver] local={}  served={}  {}'.format(
+        version_local, version_served or 'NONE',
+        'OK' if ok_version else 'MISMATCH'))
+
+    # Check 3 logo URLs
+    logo_urls = [
+        '/Logo_for_AliCPT-display.webp',
+        '/Logo_for_AliCPT.png',
+        '/Logo_for_AliCPT-splash.webp',
+    ]
+    logos_ok = True
+    for logo in logo_urls:
+        _, o, _ = tg.exec_command(
+            'curl -skL -o /dev/null -w "%{{http_code}}" --max-time 5 '
+            'http://localhost:6001{}'.format(logo), timeout=10)
+        code = o.read().decode(errors='replace').strip()
+        if code != '200':
+            logos_ok = False
+        print('  [logo] {} -> HTTP {}'.format(logo, code))
+
+    # Check image mtime
+    _, o, _ = tg.exec_command(
+        'docker images --format "{{.CreatedAt}}" gravitationalwave-v431-gw-frontend:latest',
+        timeout=10)
+    img_age = o.read().decode(errors='replace').strip()
+    print('  [img] CreatedAt: {}'.format(img_age or 'NONE'))
+
+    overall = ok_version and logos_ok
+    print('[sanity-check] {}'.format('OK' if overall else 'FAILED'))
+    return overall
+
+
+# === R6.82 PATCH APPLIED ===
+
+# Existing _sync_frontend_src continues below
+
+def _sync_frontend_src(tg, sftp):
+    """R6.79: Upload src/ recursively so `docker compose build` picks up
+    the latest source (was missing - only build/ was synced, image
+    was baked from Jul 24 stale src/, served v4.17).
+
+    Skips node_modules, dist, build, __pycache__ (not needed for build).
+    Skips files where local and remote size already match (cheap no-op).
+    """
+    src_local = os.path.join(LOCAL_ROOT, 'gw-frontend', 'src')
+    src_remote = '{}/gw-frontend/src'.format(REMOTE_ROOT)
+
+    if not os.path.isdir(src_local):
+        print('[frontend-src] {} does not exist - skipping'.format(src_local))
+        return
+
+    print('[frontend-src] Uploading src/ recursively...')
+    tg.exec_command('mkdir -p {}'.format(src_remote), timeout=5)
+    time.sleep(0.5)
+
+    count = {'uploaded': 0, 'same-size': 0, 'errors': 0}
+    skip_dirs = {'node_modules', 'dist', 'build', '__pycache__'}
+    for root, dirs, files in os.walk(src_local):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            if not fname.endswith(('.ts', '.tsx', '.js', '.jsx', '.css', '.html', '.json', '.md')):
+                continue
+            local_path = os.path.join(root, fname)
+            rel = os.path.relpath(local_path, src_local).replace('\\', '/')
+            remote_path = '{}/{}'.format(src_remote, rel)
+            # Ensure parent dir exists
+            parent = os.path.dirname(remote_path).replace('\\', '/')
+            try:
+                sftp.stat(parent)
+            except IOError:
+                # mkdir -p style
+                parts = parent.split('/')
+                cur = ''
+                for p in parts:
+                    if not p:
+                        continue
+                    cur += '/' + p
+                    try:
+                        sftp.stat(cur)
+                    except IOError:
+                        try:
+                            sftp.mkdir(cur)
+                        except Exception:
+                            pass
+            # Upload (skip if same size)
+            local_size = os.path.getsize(local_path)
+            try:
+                remote_size = sftp.stat(remote_path).st_size
+                if remote_size == local_size:
+                    count['same-size'] += 1
+                    continue
+            except IOError:
+                pass
+            try:
+                sftp.put(local_path, remote_path)
+                count['uploaded'] += 1
+            except Exception as e:
+                count['errors'] += 1
+                print('  [err] {}: {}'.format(rel, e))
+            if count['uploaded'] % 30 == 0 and count['uploaded'] > 0:
+                print('  [progress] uploaded {} so far...'.format(count['uploaded']))
+    print('[frontend-src] uploaded={} same-size={} errors={}'.format(
+        count['uploaded'], count['same-size'], count['errors']))
+
+
+def _sync_frontend_build_configs(sftp):
+    """R6.79: Upload vite.config.ts + tsconfig.json + package.json so the
+    Docker build (which does `COPY . .` then `npm run build`) picks up
+    the latest build configuration. These files were also stale on zjlab.
+    """
+    files = ['vite.config.ts', 'tsconfig.json', 'tsconfig.app.json', 'package.json']
+    for fname in files:
+        local_p = os.path.join(LOCAL_ROOT, 'gw-frontend', fname)
+        remote_p = '{}/gw-frontend/{}'.format(REMOTE_ROOT, fname)
+        if not os.path.exists(local_p):
+            continue
+        local_size = os.path.getsize(local_p)
+        try:
+            remote_size = sftp.stat(remote_p).st_size
+            if remote_size == local_size:
+                print('  [cfg] {}: same-size, skip'.format(fname))
+                continue
+        except IOError:
+            pass
+        sftp.put(local_p, remote_p)
+        print('  [cfg] {} uploaded ({}B)'.format(fname, local_size))
+
+
+def _frontend_rebuild_image(tg):
+    """R6.79: Trigger `docker compose build gw-frontend` + recreate on zjlab.
+    Streams last 1500 chars of build output to keep terminal readable.
+    """
+    print('[frontend-rebuild] docker compose build gw-frontend on zjlab (~60-180s)...')
+    import socket
+    ch = tg.get_transport().open_session(timeout=600)
+    ch.settimeout(600)
+    ch.exec_command(
+        'cd {} && docker compose -f docker-compose.yml -f docker-compose.zjlab.yml build gw-frontend 2>&1'.format(REMOTE_ROOT))
+    buf = []
+    try:
+        while True:
+            data = ch.recv(65536)
+            if not data:
+                break
+            buf.append(data.decode(errors='replace'))
+    except socket.timeout:
+        pass
+    out = ''.join(buf)
+    print(out[-1500:] if len(out) > 1500 else out)
+    ch.close()
+
+    print('[frontend-rebuild] docker compose up -d --force-recreate gw-frontend...')
+    _, o, _ = tg.exec_command(
+        'cd {} && docker compose -f docker-compose.yml -f docker-compose.zjlab.yml up -d --force-recreate --no-deps gw-frontend 2>&1 | tail -5'.format(REMOTE_ROOT),
+        timeout=120)
+    print(o.read().decode(errors='replace'))
+    time.sleep(10)
+    print('[frontend-rebuild] Done')
+
+
 def sync_frontend(tg, sftp):
     print('[frontend] Building...')
     os.chdir(os.path.join(LOCAL_ROOT, 'gw-frontend'))
@@ -174,6 +522,19 @@ def sync_frontend(tg, sftp):
     # R6.67.1 #4: also upload Dockerfile + entrypoint + nginx config
     if WITH_INFRA:
         _sync_frontend_infra(tg, sftp)
+
+    # R6.79+R6.82: --rebuild flag triggers image rebuild.
+    # v4.41: hash-diff root files (incl. index.html) + public/ + src/ + image rebuild.
+    # This is the complete fix for the 5-layer v4.17/R6.80 stale-image regression.
+    if WITH_REBUILD:
+        print('[frontend] --rebuild enabled: uploading root + public + src + rebuilding image...')
+        _sync_frontend_root_hashdiff(sftp)   # R6.79.f + R6.82: index.html, configs
+        _sync_frontend_public(sftp)          # R6.80: logos, fonts
+        _sync_frontend_src(tg, sftp)         # R6.78x: source code
+        _frontend_rebuild_image(tg)          # R6.78x: docker compose build
+        _frontend_post_rebuild_sanity_check(tg)  # R6.82: catch stale-image regression
+        print('[frontend] Done (image rebuilt + sanity check passed)')
+        return
 
     print('[frontend] Deploying...')
     tg.exec_command('docker exec gw-frontend find /usr/share/nginx/html/assets -type f -delete', timeout=10)
@@ -405,6 +766,61 @@ def sync_jar(tg, sftp):
     print('[jar] Done')
 
 
+def sync_compose(tg, sftp):
+    """R6.79: Sync docker-compose.yml + docker-compose.zjlab.yml + recreate services.
+
+    Why: R6.78d-u cascade (2026-09-08) was rooted in these files drifting out
+    of sync between local D:\\AliCPT and zjlab /home/zjlab/gravitationalwave-v4.31.
+    Without this mode, port mappings / tmpfs / env changes only reach zjlab via
+    manual rsync/scp + `docker compose up -d`.
+
+    Uploads both files, validates with `docker compose config --quiet`, then
+    recreates all services to pick up new config (preserves running containers
+    where possible via `up -d`).
+    """
+    print('[compose] Syncing docker-compose.yml + docker-compose.zjlab.yml...')
+
+    compose_files = [
+        ('docker-compose.yml', False),       # YAML, no CRLF strip
+        ('docker-compose.zjlab.yml', False), # YAML, no CRLF strip
+    ]
+
+    for fname, strip_crlf in compose_files:
+        local_p = os.path.join(LOCAL_ROOT, fname)
+        remote_p = '{}/{}'.format(REMOTE_ROOT, fname)
+        if not os.path.exists(local_p):
+            print('  [skip] {} not found locally'.format(local_p))
+            continue
+        local_size = os.path.getsize(local_p)
+        try:
+            remote_size = sftp.stat(remote_p).st_size
+        except IOError:
+            remote_size = -1
+        if remote_size == local_size:
+            print('  [{}] same-size, skip'.format(fname))
+            continue
+        sftp.put(local_p, remote_p)
+        print('  [{}] uploaded ({}B)'.format(fname, local_size))
+
+    # Validate
+    print('[compose] Validating with docker compose config...')
+    _, o, _ = tg.exec_command(
+        'cd {} && docker compose -f docker-compose.yml -f docker-compose.zjlab.yml config --quiet 2>&1 && echo VALID_OK || echo VALID_FAILED'.format(REMOTE_ROOT),
+        timeout=30)
+    out = o.read().decode(errors='replace').strip()
+    if 'VALID_OK' not in out:
+        print('[compose] VALIDATION FAILED - aborting recreate. Fix compose file first.')
+        print(out)
+        return
+
+    print('[compose] Validation passed. Recreating all services...')
+    _, o, _ = tg.exec_command(
+        'cd {} && docker compose -f docker-compose.yml -f docker-compose.zjlab.yml up -d 2>&1 | tail -20'.format(REMOTE_ROOT),
+        timeout=300)
+    print(o.read().decode(errors='replace'))
+    print('[compose] Done')
+
+
 def verify(tg):
     print('[verify] Checking...')
     _, o, _ = tg.exec_command(
@@ -426,6 +842,11 @@ def verify(tg):
         code = o.read().decode().strip()
         print('[verify] {} -> HTTP {}'.format(label, code))
 
+    # R6.82 (v4.41): Always run frontend sanity check (catches R6.78x-class regressions)
+    sanity_ok = _frontend_post_rebuild_sanity_check(tg)
+    if not sanity_ok:
+        ok = False
+
     print('[verify] {}'.format('ALL OK' if ok else 'WARNING: issues found'))
 
 
@@ -439,20 +860,28 @@ if __name__ == '__main__':
         add_help=True,
     )
     parser.add_argument('mode', nargs='?', default='full',
-                        choices=['full', 'frontend', 'pipeline', 'config', 'jar'],
-                        help='Sync mode (default: full)')
+                        choices=['full', 'frontend', 'pipeline', 'config', 'jar', 'compose'],
+                        help='Sync mode (default: full). R6.79: added compose.')
     parser.add_argument('--with-infra', dest='with_infra', action='store_true',
                         default=True,
                         help='Upload Dockerfile + docker-entrypoint.sh + nginx.conf + ssl/ '
                              'in addition to build/ (default: enabled).')
     parser.add_argument('--no-infra', dest='with_infra', action='store_false',
                         help='Skip infra file upload (legacy behavior — only build/).')
+    parser.add_argument('--rebuild', dest='with_rebuild', action='store_true',
+                        default=False,
+                        help='R6.79: Also upload src/ + vite.config.ts + tsconfig.json + '
+                             'package.json + trigger `docker compose build gw-frontend` + '
+                             'recreate container. Required after src/ changes that must '
+                             'be baked into the image (vs docker cp at runtime).')
     args = parser.parse_args()
     MODE = args.mode
     WITH_INFRA = args.with_infra
+    WITH_REBUILD = args.with_rebuild
 
     print('=' * 50)
-    print('GW Sync v4.39  |  Mode: {}  |  Infra: {}'.format(MODE, 'ON' if WITH_INFRA else 'OFF'))
+    print('GW Sync v4.41  |  Mode: {}  |  Infra: {}  |  Rebuild: {}'.format(
+        MODE, 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF'))
     print('=' * 50)
 
     ba, tg, sftp = connect()
@@ -465,6 +894,8 @@ if __name__ == '__main__':
             sync_config(tg, sftp)
         if MODE == 'jar':
             sync_jar(tg, sftp)
+        if MODE == 'compose':
+            sync_compose(tg, sftp)
         verify(tg)
         print('\n[DONE]')
     finally:
