@@ -71,7 +71,7 @@ services:
     # DEV ONLY — remove in production via docker-compose.prod.yml
     # Use: docker exec -it gw-elasticsearch curl ... for production access
     ports:
-      - "9200:9200"
+      - "9201:9200"
     environment:
       - discovery.type=single-node
       - "ES_JAVA_OPTS=-Xms512m -Xmx768m"
@@ -382,10 +382,6 @@ services:
 
   # ── FRONT-END TIER (gw-net only) ─────────────────────────────────────────
 
-  # R6.67.1: re-enable read_only: true now that Dockerfile has wrapper
-  # entrypoint that chowns tmpfs paths as root, then drops to nginx user.
-  # Pairs with Dockerfile install of `su-exec` + /docker-entrypoint.sh.
-  # See STATE_SNAPSHOT §45.31 for full root cause.
   gw-frontend:
     build:
       context: ./gw-frontend
@@ -413,7 +409,7 @@ services:
       gw-firefly:
         condition: service_healthy
     restart: unless-stopped
-    # R6.66.2: docker compose v2.29.7 upgrade (was v2.19.1) — restore read_only: true.
+    # R6.66.2: docker compose v2.29.7 upgrade (was v2.19.1) — restore read_only: true
     # Root cause of R6.65 removal: legacy Tmpfs API in compose v2.19.x silently
     # dropped `:mode=1777` suffix, creating tmpfs as root:root 0755. nginx user
     # (uid 101) couldn't write pid file. v2.20+ preserves the mode correctly.
@@ -437,21 +433,6 @@ services:
     # Future fix path: custom Dockerfile RUN that wraps nginx start with chown,
     # OR switch pid path to /tmp/nginx.pid in nginx.conf (already 1777 tmpfs).
     # Tracking as R6.66+ 留待.
-    # R6.67.1.e (2026-09-07): READ_ONLY RESTORED to true. Dockerfile now installs
-    # `su-exec` (Alpine package) and a custom /docker-entrypoint.sh that:
-    #   1. Runs as root (compose-provided root user; no-new-privileges still in effect)
-    #   2. Re-chowns /var/cache/nginx, /var/run/nginx, /var/log/nginx to nginx:nginx
-    #      (necessary because tmpfs mounts mask build-time ownership)
-    #   3. Drops to USER nginx via `su-exec nginx "$@"` before exec'ing nginx
-    # This pattern is the canonical "run nginx as non-root with read_only FS" recipe.
-    # Verified locally by docker build + docker run on 2026-09-07.
-    read_only: true
-    tmpfs:
-      - /var/cache/nginx:mode=1777
-      - /var/run/nginx:mode=1777
-      - /var/log/nginx:mode=1777
-      - /tmp:mode=1777
-      - /var/run:mode=1777
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -475,6 +456,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run/nginx
+      - /var/log/nginx
+      - /tmp
+      - /etc/nginx/conf.d
     networks:
       - gw-net
     # No gw-db — frontend cannot directly access Mongo/ES
@@ -487,7 +475,6 @@ services:
 #  NETWORKS — segmented by security tier (v4.15)
 # ═══════════════════════════════════════════════════════════════════════════
 networks:
-
   gw-net:
     driver: bridge
     # Application tier: frontend, backend, pipeline, mcp, firefly

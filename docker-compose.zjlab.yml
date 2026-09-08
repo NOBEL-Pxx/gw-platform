@@ -93,14 +93,17 @@ services:
     # v4.31: GPU 加速 — nvidia 已是 Docker 默认运行时
     # Phase 1: onnxruntime 1.20.1 (CPU) — GPU 设备可见但未使用
     # Phase 2: 升级 onnxruntime-gpu + nvidia/cuda 基础镜像 → GPU 推理
+    # R6.78c fix: `devices` was misplaced under deploy.resources (swarm-only schema).
+    # Docker Compose v2.29.7 (zjlab) requires `devices` at service level. For
+    # CPU-only Phase 1 we comment out entirely (no GPU passthrough needed yet).
+    # devices:
+    #   - driver: nvidia
+    #     count: 1
+    #     capabilities: [gpu]
     deploy:
       resources:
         limits: { cpus: '8.0', memory: 8G }
         reservations: { cpus: '2.0', memory: 2G }
-        devices:
-          - driver: nvidia
-            count: 1
-            capabilities: [gpu]
     environment:
       GW_EXCLUDE_GPL_MODELS: "false"  # 内部科研使用，保留 GPL 模型
 
