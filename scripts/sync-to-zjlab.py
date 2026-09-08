@@ -50,6 +50,8 @@ REMOTE_ROOT = '/home/zjlab/gravitationalwave-v4.31'
 LOCAL_ROOT  = r'D:\AliCPT'
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else 'full'
+# R6.84: --env-action flag. Overridden in main() before sanity check runs.
+ENV_ACTION = 'detect'
 
 
 def connect():
@@ -388,7 +390,84 @@ def _frontend_post_rebuild_sanity_check(tg):
 
     overall = ok_version and logos_ok and env_ok
     print('[sanity-check] {}'.format('OK' if overall else 'FAILED'))
+
+    # R6.84: When DRIFT detected, optionally show key-level diff (no values).
+    # Privacy: parses key names ONLY via regex `^[A-Z_][A-Z0-9_]*=` — never
+    # reads file content into logs. Backend vs pipeline use different
+    # DEEPSEEK_API_KEYs per [[gw-deepseek-key-split]]; auto-sync would break
+    # multi-env isolation. So no `--force-env` upload path.
+    if not env_ok and ENV_ACTION == 'keys':
+        diff = _env_key_diff(tg)
+        if diff is not None:
+            added = diff.get('added', [])
+            removed = diff.get('removed', [])
+            modified = diff.get('modified', [])
+            print('  [env-diff] key-level (NO values shown):')
+            if added:
+                print('    + added (local only): {}'.format(', '.join(sorted(added))))
+            if removed:
+                print('    - removed (local only): {}'.format(', '.join(sorted(removed))))
+            if modified:
+                print('    ~ modified (value differs): {}'.format(', '.join(sorted(modified))))
+            if not (added or removed or modified):
+                print('    (key set identical; values differ — re-encrypt or manually copy)')
+            print('  [env-resolve] manual: scp .env zjlab:{}/.env  '
+                  '(verify DEEPSEEK_API_KEY per service)'.format(REMOTE_ROOT))
+        else:
+            print('  [env-diff] (failed to fetch remote .env for key diff)')
     return overall
+
+
+def _env_key_diff(tg):
+    """R6.84: Return dict {added, removed, modified} of KEY NAMES (no values).
+
+    Compares local .env vs remote .env by parsing key names only:
+      - regex `^([A-Z_][A-Z0-9_]*)='  captures keys from shell-style `KEY=value`
+      - skips comments (#) and blank lines
+      - SHA-compares per-key value blobs to detect "modified" without logging values
+
+    Returns dict with lists (possibly empty). Returns empty dict on remote
+    missing or fetch failure.
+    """
+    import re
+    diff = {'added': [], 'removed': [], 'modified': []}
+    # Local keys
+    local_keys = {}
+    env_local = os.path.join(LOCAL_ROOT, '.env')
+    if os.path.exists(env_local):
+        with open(env_local, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                m = re.match(r'^([A-Z_][A-Z0-9_]*)=(.*)$', line)
+                if m:
+                    local_keys[m.group(1)] = m.group(2).strip()
+    # Remote keys (via grep; do NOT cat entire file into memory unnecessarily)
+    _, o, _ = tg.exec_command(
+        "grep -oP '^[A-Z_][A-Z0-9_]*(?==)' {}/.env 2>/dev/null | sort -u"
+        .format(REMOTE_ROOT), timeout=5)
+    remote_keys = set(
+        line.strip() for line in o.read().decode(errors='replace').splitlines() if line.strip())
+    local_set = set(local_keys.keys())
+    diff['added'] = sorted(local_set - remote_keys)
+    diff['removed'] = sorted(remote_keys - local_set)
+    # Detect "modified" via per-key SHA (sha256sum of value only — no leak)
+    candidate_modified = local_set & remote_keys
+    for key in sorted(candidate_modified):
+        # Local: hash the value bytes
+        local_val_sha = hashlib.sha256(local_keys[key].encode('utf-8')).hexdigest()[:8]
+        # Remote: hash the value via awk extraction (key only, no other lines)
+        # Use sed to print just the value line, then awk to extract value
+        # Use f-string instead of .format() to avoid brace-escaping in regex
+        cmd = (f"grep -P '^{{re.escape(key)}}=' {REMOTE_ROOT}/.env 2>/dev/null | "
+               f"head -1 | sed 's/^{{re.escape(key)}}=//' | sha256sum | cut -c1-8")
+        _, o2, _ = tg.exec_command(cmd, timeout=5)
+        remote_val_sha = o2.read().decode(errors='replace').strip()
+        if remote_val_sha and remote_val_sha != local_val_sha:
+            diff['modified'].append(key)
+    # Remove empty lists for cleaner output
+    return {k: v for k, v in diff.items() if v}
 
 
 def _backend_post_rebuild_sanity_check(tg):
@@ -960,14 +1039,20 @@ if __name__ == '__main__':
                              'package.json + trigger `docker compose build gw-frontend` + '
                              'recreate container. Required after src/ changes that must '
                              'be baked into the image (vs docker cp at runtime).')
+    parser.add_argument('--env-action', dest='env_action', default='detect',
+                        choices=['detect', 'keys'],
+                        help='R6.84: .env DRIFT response. "detect" (default) only prints '
+                             'OK/DRIFT. "keys" additionally prints KEY-LEVEL diff '
+                             '(added/removed/modified key names, NEVER values).')
     args = parser.parse_args()
     MODE = args.mode
     WITH_INFRA = args.with_infra
     WITH_REBUILD = args.with_rebuild
+    ENV_ACTION = args.env_action
 
     print('=' * 50)
-    print('GW Sync v4.41  |  Mode: {}  |  Infra: {}  |  Rebuild: {}'.format(
-        MODE, 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF'))
+    print('GW Sync v4.41  |  Mode: {}  |  Infra: {}  |  Rebuild: {}  |  Env: {}'.format(
+        MODE, 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', ENV_ACTION))
     print('=' * 50)
 
     ba, tg, sftp = connect()
