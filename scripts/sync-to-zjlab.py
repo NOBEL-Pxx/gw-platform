@@ -367,6 +367,55 @@ def _sync_frontend_nginx_confd(tg, sftp):
     return count
 
 
+def _sync_frontend_nginx_confd_bindmount(tg, sftp):
+    """R6.95: Sync nginx conf.d/bindmount/*.conf to bind-mount source.
+
+    bindmount/ bind-mount source: /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-conf.d-bindmount/
+                  container: /etc/nginx/conf.d/bindmount/  (loaded BEFORE conf.d/*.conf in nginx.conf)
+
+    Source dir (local): D:\AliCPT\gw-frontend\nginx-conf.d-bindmount\*.conf
+
+    Why separate from conf.d/:
+      - conf.d/ is bind-mounted but ALSO iterated by entrypoint envsubst for *.template files.
+        Anything in conf.d/ that has the same name as a generated template conflicts.
+      - bindmount/ is for STATIC *.conf files only (no envsubst). Drop a file in, no rebuild,
+        no template iteration, just `nginx -s reload` to activate.
+      - nginx loads bindmount/*.conf BEFORE conf.d/*.conf, so user *.conf here can shadow
+        or override image-baked defaults for matching server_names.
+
+    Use cases:
+      - R6.92b/R6.95 smoketest endpoint (static, no envsubst needed)
+      - Feature toggles (server_name routing)
+      - Debug endpoints
+      - Anything that needs ms-level deployment without image rebuild
+
+    R6.95 first-deploy fix: ensure remote bindmount/ dir exists before upload.
+    """
+    bindmount_local = os.path.join(LOCAL_ROOT, 'gw-frontend', 'nginx-conf.d-bindmount')
+    if not os.path.isdir(bindmount_local):
+        print('  [nginx-confd-bindmount] source dir {} does not exist (skip)'.format(bindmount_local))
+        return 0
+
+    remote_dir = '{}/gw-frontend/nginx-conf.d-bindmount'.format(REMOTE_ROOT)
+
+    # R6.92a: ensure remote parent dir exists before sftp.put
+    _ensure_remote_dir(tg, remote_dir)
+
+    count = 0
+    for fname in sorted(os.listdir(bindmount_local)):
+        if not fname.endswith('.conf'):
+            continue
+        fpath = os.path.join(bindmount_local, fname)
+        if not os.path.isfile(fpath):
+            continue
+        dst = '{}/{}'.format(remote_dir, fname)
+        _upload_binary_file(sftp, fpath, dst)
+        count += 1
+
+    if count:
+        print('[nginx-confd-bindmount] Uploaded {} conf files (R6.95)'.format(count))
+    return count
+
 
 
 def _sync_frontend_public(sftp):
@@ -971,6 +1020,7 @@ def sync_frontend(tg, sftp):
     if WITH_INFRA:
         _sync_frontend_infra(tg, sftp)
         _sync_frontend_nginx_confd(tg, sftp)  # R6.89b + R6.91: nginx conf.d/*.conf + templates/*.template → bind mount
+        _sync_frontend_nginx_confd_bindmount(tg, sftp)  # R6.95: user-controlled static *.conf (loaded BEFORE conf.d/*.conf)
 
     # R6.79+R6.82: --rebuild flag triggers image rebuild.
     # v4.41: hash-diff root files (incl. index.html) + public/ + src/ + image rebuild.
