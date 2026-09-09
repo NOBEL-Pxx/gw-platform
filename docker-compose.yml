@@ -462,7 +462,11 @@ services:
       - /var/run/nginx
       - /var/log/nginx
       - /tmp
-      - /etc/nginx/conf.d
+      # R6.89b: /etc/nginx/conf.d moved to bind mount (was R6.78u cascade entry point).
+      # Tmpfs shadows image content + lost on recreate. Bind mount source:
+      # /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-conf-d/
+      # sync-to-zjlab.py uploads D:\AliCPT\gw-frontend\nginx-conf.d\*.conf there.
+      # entrypoint envsubst still works (root writes to bind mount, which is host-writable).
     # R6.87a: bind-mount /usr/share/nginx/html from host dir. Closes R6.78u cascade
     # by allowing `docker cp` into nginx html (read_only + tmpfs shadows image content
     # AND blocks docker cp at daemon level — bind mount is the only path that works).
@@ -473,6 +477,14 @@ services:
     # which is broken — always populate host dir before first recreate).
     volumes:
       - ./gw-frontend/nginx-html:/usr/share/nginx/html
+      # R6.89b: bind-mount /etc/nginx/conf.d/ for runtime nginx config persistence.
+      # Host dir must exist before first container start; sync-to-zjlab.py populates it.
+      - ./gw-frontend/nginx-conf.d:/etc/nginx/conf.d
+      # R6.90b: bind-mount /etc/nginx/conf.d/templates/ for user-added *.template files.
+      # entrypoint envsubst reads templates/*.template at container start, generates
+      # corresponding *.conf in /etc/nginx/conf.d/. Lets user add custom envsubst-able
+      # config without rebuilding the gw-frontend image.
+      - ./gw-frontend/nginx-conf.d/templates:/etc/nginx/conf.d/templates
     networks:
       - gw-net
     # No gw-db — frontend cannot directly access Mongo/ES

@@ -113,6 +113,103 @@ def _upload_binary_file(sftp, local_path, remote_path):
     return len(raw)
 
 
+def _check_build_staleness():
+    """R6.89a + R6.89c: Detect stale build/ when --no-build used.
+
+    Two complementary checks:
+    1. Filesystem mtime: walk src/ for newest mtime, compare to build/assets/index-*.js mtime
+    2. Git commit timestamp: `git log -1 --format=%%ct -- src/`, compare to build mtime
+
+    Both checks are warnings, NOT errors. User may knowingly skip build
+    (e.g., just verifying a deploy without src/ changes).
+
+    Returns: (is_stale, reason, freshest_src_ts, build_ts, git_ts)
+    """
+    src_dir = os.path.join(LOCAL_ROOT, 'gw-frontend', 'src')
+    build_dir = os.path.join(LOCAL_ROOT, 'gw-frontend', 'build', 'assets')
+
+    # Build artifact reference timestamp (use newest index-*.js)
+    build_ts = 0
+    if os.path.isdir(build_dir):
+        for fname in os.listdir(build_dir):
+            if fname.startswith('index-') and fname.endswith('.js'):
+                p = os.path.join(build_dir, fname)
+                build_ts = max(build_ts, os.path.getmtime(p))
+        if not build_ts:
+            return (True, 'no build/assets/index-*.js found', 0, 0, 0)
+
+    # R6.89a: src/ filesystem mtime
+    freshest_src_mtime = 0
+    src_count = 0
+    if os.path.isdir(src_dir):
+        for root, dirs, files in os.walk(src_dir):
+            # Skip noisy dirs
+            dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', 'dist', 'build', '__pycache__')]
+            for fname in files:
+                p = os.path.join(root, fname)
+                freshest_src_mtime = max(freshest_src_mtime, os.path.getmtime(p))
+                src_count += 1
+
+    # R6.89c: git commit timestamp affecting src/
+    git_ts = 0
+    try:
+        # Run git log in gw-frontend dir
+        gw_dir = os.path.join(LOCAL_ROOT, 'gw-frontend')
+        out = subprocess.check_output(
+            ['git', 'log', '-1', '--format=%ct', '--', 'src/'],
+            cwd=gw_dir, stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+        if out.isdigit():
+            git_ts = int(out)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Compare: take the MAX of src_mtime and git_ts as "freshest src change"
+    freshest_src_ts = max(freshest_src_mtime, git_ts)
+
+    # Build is stale if either is newer than build
+    is_stale = freshest_src_ts > build_ts
+
+    if is_stale:
+        import datetime
+        src_str = datetime.datetime.fromtimestamp(freshest_src_ts).strftime('%Y-%m-%d %H:%M')
+        build_str = datetime.datetime.fromtimestamp(build_ts).strftime('%Y-%m-%d %H:%M')
+        reason = ('src/ freshest={} ({} mtime + {} git ts) > build/ {} '
+                  '(src files scanned: {})').format(
+            src_str, freshest_src_mtime, git_ts, build_str, src_count)
+        return (True, reason, freshest_src_ts, build_ts, git_ts)
+
+    return (False, '', freshest_src_ts, build_ts, git_ts)
+
+
+def _check_unpushed_src_commits():
+    """R6.90d: Count unpushed commits touching src/ (conservative hint, never auto-rebuild).
+
+    Why conservative: matches [[manual-confirm-major-changes]] - image rebuilds are major.
+    We print NOTE only; user must explicitly pass --rebuild.
+
+    Detection: `git log origin/r6.52..HEAD --oneline -- src/`
+    - origin/r6.52 is the deploy branch (matches current r678x+ push pattern)
+    - If no upstream (new clone / no remote tracking), git log exits non-zero -> caught -> 0
+    - If working tree differs from HEAD but no unpushed commits (e.g. uncommitted changes),
+      this returns 0 (only counts commits, not working tree mtime)
+    """
+    try:
+        gw_dir = os.path.join(LOCAL_ROOT, 'gw-frontend')
+        out = subprocess.check_output(
+            ['git', 'log', 'origin/r6.52..HEAD', '--oneline', '--', 'src/'],
+            cwd=gw_dir, stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+        if not out:
+            return 0
+        return len(out.split('\n'))
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return 0
+
+
+
 def _sync_frontend_infra(tg, sftp):
     """R6.67.1 #4: sync Dockerfile + docker-entrypoint.sh + nginx.conf + ssl/
     for gw-frontend in addition to build/.
@@ -166,7 +263,87 @@ def _sync_frontend_infra(tg, sftp):
 
 
 
-# === R6.82: new helpers (v4.41) ===
+def _sync_frontend_nginx_confd(tg, sftp):
+    """R6.89b + R6.90b + R6.91: Sync nginx conf.d/*.conf + templates/*.template to bind-mount sources.
+
+    conf.d/    bind-mount source: /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-conf.d/
+               container: /etc/nginx/conf.d/  (replaces tmpfs - R6.78u cascade entry point #5)
+    templates/ bind-mount source: .../nginx-conf.d/templates/
+               container: /etc/nginx/conf.d/templates/  (R6.90b - lets user add *.template without rebuild)
+
+    entrypoint envsubst at container start reads /etc/nginx/conf.d/templates/*.template
+    and generates corresponding /etc/nginx/conf.d/*.conf. So adding my-feature.template
+    in the templates/ dir produces my-feature.conf on next start.
+
+    Source dirs (local):
+      D:\\AliCPT\\gw-frontend\\nginx-conf.d\\*.conf
+      D:\\AliCPT\\gw-frontend\\nginx-conf.d\\templates\\*.template (skips .gitkeep)
+
+    Why bind-mount (vs tmpfs):
+    - Tmpfs shadows image content (R6.78u pattern): any custom *.conf added at runtime
+      is lost on container recreate
+    - read_only: true + bind mount allows runtime config updates without image rebuild
+    - envsubst at startup still works (root user writes to bind mount, which IS writable
+      from host's perspective)
+
+    Trade-off: bind mount SOURCE dirs must exist before first container start.
+    nginx-conf.d/ must contain at least default.conf (R6.90a bootstrapped).
+    templates/ may be empty (no user templates = no envsubst output = no harm).
+
+    R6.91 first-deploy fix: ensure remote nginx-conf.d/ + templates/ dirs exist
+    before upload (sftp.open() fails with ENOENT if parent dir doesn't exist).
+    """
+    nginx_confd_dir = os.path.join(LOCAL_ROOT, 'gw-frontend', 'nginx-conf.d')
+    if not os.path.isdir(nginx_confd_dir):
+        print('  [nginx-confd] source dir {} does not exist (skip)'.format(nginx_confd_dir))
+        return 0
+
+    remote_dir = '{}/gw-frontend/nginx-conf.d'.format(REMOTE_ROOT)
+
+    # R6.91: ensure remote dirs exist (mkdir -p idempotent)
+    tg.exec_command('mkdir -p {0} {0}/templates'.format(remote_dir), timeout=5)
+    time.sleep(0.3)
+
+    count = 0
+
+    # Upload *.conf (R6.89b)
+    for fname in sorted(os.listdir(nginx_confd_dir)):
+        fpath = os.path.join(nginx_confd_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        if not fname.endswith('.conf'):
+            continue
+        dst = '{}/{}'.format(remote_dir, fname)
+        _upload_binary_file(sftp, fpath, dst)
+        count += 1
+
+    if count:
+        print('[nginx-confd] Uploaded {} conf files'.format(count))
+
+    # R6.90b: Upload templates/*.template (skip .gitkeep)
+    templates_dir = os.path.join(nginx_confd_dir, 'templates')
+    if os.path.isdir(templates_dir):
+        remote_templates_dir = '{}/templates'.format(remote_dir)
+        tcount = 0
+        for fname in sorted(os.listdir(templates_dir)):
+            fpath = os.path.join(templates_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            if not fname.endswith('.template'):
+                continue
+            if fname == '.gitkeep':
+                continue
+            dst = '{}/{}'.format(remote_templates_dir, fname)
+            _upload_binary_file(sftp, fpath, dst)
+            tcount += 1
+        if tcount:
+            print('[nginx-confd-templates] Uploaded {} template files'.format(tcount))
+        count += tcount
+
+    return count
+
+
+
 
 def _sync_frontend_public(sftp):
     """R6.80 (v4.41): Upload public/ recursively so `docker compose build` picks up
@@ -696,6 +873,25 @@ def sync_frontend(tg, sftp):
         subprocess.run('npm run build', shell=True)
     else:
         print('[frontend] --no-build: skipping npm run build (using existing build/)')
+        # R6.89a + R6.89c: warn if src/ has changes newer than build/
+        is_stale, reason, _, _, _ = _check_build_staleness()
+        if is_stale:
+            if args.force_stale:
+                # R6.90c: --force-stale set -> downgrade WARNING to NOTE
+                print('[frontend] NOTE: build/ may be STALE but --force-stale is set, proceeding anyway')
+                print('  [frontend]       {}'.format(reason))
+                print('  [frontend]       Served bundle will reflect older src/. User accepts this risk.')
+            else:
+                print('[frontend] !! WARNING: build/ may be STALE')
+                print('  [frontend] !! {}'.format(reason))
+                print('  [frontend] !! Served bundle will reflect older src/. Re-run without --no-build to rebuild.')
+                print('  [frontend] !! (Or pass --force-stale to suppress this warning in future.)')
+        # R6.90d: conservative hint for unpushed src/ commits
+        unpushed = _check_unpushed_src_commits()
+        if unpushed > 0:
+            print('[frontend] NOTE: src/ has {} unpushed commit(s)'.format(unpushed))
+            print('  [frontend]       run with --rebuild to bake them into the image')
+            print('  [frontend]       proceeding with --no-build anyway (use --rebuild manually)')
 
     dist_dir = os.path.join(LOCAL_ROOT, 'gw-frontend', 'build')
     if not os.path.exists(dist_dir):
@@ -724,6 +920,7 @@ def sync_frontend(tg, sftp):
     # R6.67.1 #4: also upload Dockerfile + entrypoint + nginx config
     if WITH_INFRA:
         _sync_frontend_infra(tg, sftp)
+        _sync_frontend_nginx_confd(tg, sftp)  # R6.89b + R6.91: nginx conf.d/*.conf + templates/*.template → bind mount
 
     # R6.79+R6.82: --rebuild flag triggers image rebuild.
     # v4.41: hash-diff root files (incl. index.html) + public/ + src/ + image rebuild.
@@ -1084,6 +1281,11 @@ if __name__ == '__main__':
                              'fresh (e.g. you already ran `npm run build` locally). Saves '
                              '~30-60s per deploy. Combined with bind-mount fast path '
                              '(nginx-html SFTP + nginx reload), full sync is ~1-2s end-to-end.')
+    parser.add_argument('--force-stale', dest='force_stale', action='store_true',
+                        default=False,
+                        help='R6.89c: Suppress the staleness warning when --no-build is used and '
+                             'src/ has changes newer than build/. Use when you KNOWINGLY skip '
+                             'rebuild (e.g., verifying a deploy without src/ changes).')
     parser.add_argument('--env-action', dest='env_action', default='detect',
                         choices=['detect', 'keys'],
                         help='R6.84: .env DRIFT response. "detect" (default) only prints '
