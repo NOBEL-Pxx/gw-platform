@@ -491,6 +491,12 @@ services:
       # envsubst). Use for smoke-test endpoints, feature toggles, debug configs that
       # don't need image rebuild + don't need envsubst vars.
       - ./gw-frontend/nginx-conf.d-bindmount:/etc/nginx/conf.d/bindmount
+      # R6.97 #1: bind-mount nginx.conf itself. Closes R6.96e — changes to nginx.conf
+      # no longer require `docker compose build gw-frontend` + force-recreate.
+      # Reads from ./gw-frontend/nginx.conf on host = /etc/nginx/nginx.conf in container
+      # (read-only to prevent container-side writes from breaking the bind mount).
+      # After sync, run `docker kill --signal=HUP gw-frontend` (R6.96d) to reload.
+      - ./gw-frontend/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       - gw-net
     # No gw-db — frontend cannot directly access Mongo/ES

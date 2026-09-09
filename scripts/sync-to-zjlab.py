@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GravitationalWave Platform — Sync Script (v4.41)
+GravitationalWave Platform — Sync Script (v4.43)
 ================================================
 Sync local code to ZhiJiang Lab remote server via SSH bastion.
 
@@ -430,7 +430,7 @@ def _sync_frontend_nginx_confd_bindmount(tg, sftp):
       - conf.d/ is bind-mounted but ALSO iterated by entrypoint envsubst for *.template files.
         Anything in conf.d/ that has the same name as a generated template conflicts.
       - bindmount/ is for STATIC *.conf files only (no envsubst). Drop a file in, no rebuild,
-        no template iteration, just `nginx -s reload` to activate.
+        no template iteration, just `docker kill --signal=HUP gw-frontend` to activate (R6.96d).
       - nginx loads bindmount/*.conf BEFORE conf.d/*.conf, so user *.conf here can shadow
         or override image-baked defaults for matching server_names.
 
@@ -1095,7 +1095,7 @@ def sync_frontend(tg, sftp):
     # Old path: docker exec delete + docker cp + nginx reload (~5s, BROKEN by R6.78u).
     # New path: just nginx reload (~1s, container reads bind mount directly).
     print('[frontend] Reloading nginx (bind mount auto-reflects)...')
-    tg.exec_command('docker exec gw-frontend nginx -s reload', timeout=10)
+    tg.exec_command('docker kill --signal=HUP gw-frontend', timeout=15)  # R6.97 A: docker kill HUP (R6.96d — nginx -s reload fails when master is PID 1)
     print('[frontend] Done (fast path)')
 
 
@@ -1304,7 +1304,7 @@ def sync_config(tg, sftp):
     if os.path.exists(local_nginx):
         sftp.put(local_nginx, '/tmp/locations-common.conf')
         tg.exec_command('docker cp /tmp/locations-common.conf gw-frontend:/etc/nginx/shared/locations-common.conf', timeout=10)
-        tg.exec_command('docker exec gw-frontend nginx -s reload', timeout=10)
+        tg.exec_command('docker kill --signal=HUP gw-frontend', timeout=15)  # R6.97 A: docker kill HUP (R6.96d — nginx -s reload fails when master is PID 1)
         print('[config] Done')
 
 

@@ -15,6 +15,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
+        <!-- R6.97 #2: Spring Boot Actuator (closes R6.96c fallback).
+             application.properties already has management.endpoints.web.exposure.include
+             + show-details/show-components, but the dependency was missing.
+             Result: /actuator/health returned 500 'NoResourceFoundException'.
+             Adding starter-actuator brings back /actuator/{health,info,prometheus,metrics}. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <!-- Add Log4j2 Dependency -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
