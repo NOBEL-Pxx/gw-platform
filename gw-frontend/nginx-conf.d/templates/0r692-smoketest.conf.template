@@ -1,0 +1,25 @@
+# R6.92b/R6.94/R6.94c smoke-test template
+# Filename MUST be 0r692-smoketest.conf.template (leading 0) so entrypoint
+# generates 0r692-smoketest.conf, which loads BEFORE default.conf (alphabetical
+# ordering: 0 < d). This is required because nginx picks FIRST matching server.
+#
+# Endpoint: GET /r692-smoketest-status -> 200 with HOSTNAME marker
+# Access via custom Host header so smoketest doesn't shadow default.conf:
+#   curl -sk --resolve "r692-smoketest.local:6002:127.0.0.1" #        https://r692-smoketest.local:6002/r692-smoketest-status
+# Or via 6001 with -H:
+#   curl -skL -H "Host: r692-smoketest.local" #        http://localhost:6001/r692-smoketest-status
+server {
+    listen 443 ssl http2;
+    server_name r692-smoketest.local;  # R6.94e: unique name so default.conf still handles main app
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # R6.92b: smoke test endpoint (exact match)
+    location = /r692-smoketest-status {
+        default_type text/plain;
+        return 200 "r692-smoketest OK hostname=$HOSTNAME port=443
+";
+    }
+}

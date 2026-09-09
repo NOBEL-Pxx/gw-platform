@@ -12,8 +12,14 @@ set -e
 
 # R6.67.3: envsubst on templates (replaces stock nginx:alpine behavior).
 # Filter only the env vars we care about to avoid leaking host env into config.
-if [ -d /etc/nginx/templates ]; then
-    for tmpl in /etc/nginx/templates/*.template; do
+# R6.93: iterate BOTH /etc/nginx/templates (image-baked, e.g. default.conf.template)
+# AND /etc/nginx/conf.d/templates (R6.90b bind-mount for user-added templates).
+# Previously R6.90b bound mount to /etc/nginx/conf.d/templates/ but entrypoint only
+# looked at /etc/nginx/templates/, so user templates were silently ignored. R6.92b
+# smoketest surfaced this; fix = iterate both dirs.
+for TEMPLATES_DIR in /etc/nginx/templates /etc/nginx/conf.d/templates; do
+    [ -d "$TEMPLATES_DIR" ] || continue
+    for tmpl in "$TEMPLATES_DIR"/*.template; do
         [ -e "$tmpl" ] || continue
         out="/etc/nginx/conf.d/$(basename "$tmpl" .template)"
         if [ -n "$NGINX_ENVSUBST_FILTER" ]; then
@@ -36,7 +42,7 @@ if [ -d /etc/nginx/templates ]; then
         fi
         echo "[entrypoint] envsubst: $tmpl -> $out"
     done
-fi
+done
 
 # Re-chown writable paths (in case tmpfs masked our build-time chown)
 chown -R nginx:nginx \

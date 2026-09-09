@@ -225,9 +225,9 @@ def _sync_frontend_infra(tg, sftp):
     gw_dir = os.path.join(LOCAL_ROOT, 'gw-frontend')
     remote_dir = '{}/gw-frontend'.format(REMOTE_ROOT)
 
-    # Make sure target dirs exist (build/ already done; we add root + ssl/)
-    tg.exec_command('mkdir -p {}/ssl'.format(remote_dir), timeout=5)
-    time.sleep(0.5)
+    # R6.92a: use generic _ensure_remote_dir helper (was ad-hoc mkdir -p ssl/)
+    _ensure_remote_dir(tg, remote_dir)
+    _ensure_remote_dir(tg, remote_dir + '/ssl')
 
     # (local_name, remote_name, strip_crlf, executable)
     infra_files = [
@@ -261,6 +261,30 @@ def _sync_frontend_infra(tg, sftp):
 
     print('[frontend-infra] Uploaded {} infra files'.format(uploaded))
 
+
+
+def _ensure_remote_dir(tg, remote_path):
+    """R6.92a: Generic mkdir -p helper for all bind-mount sync helpers.
+
+    Why: 5th R6.78u-style bind-mount ENOENT footgun. R6.91 added ad-hoc mkdir inside
+    _sync_frontend_nginx_confd. Systemic fix: 1 helper, applied uniformly at the
+    start of every bind-mount sync helper. Idempotent (`mkdir -p` no-op if exists).
+
+    Trade-off: 1 extra exec_command per helper (~50ms latency, parallel-safe).
+    Acceptable vs debugging 6h ENOENT regression.
+
+    Use:
+        remote_dir = '{}/gw-frontend/nginx-conf.d'.format(REMOTE_ROOT)
+        _ensure_remote_dir(tg, remote_dir)
+        _ensure_remote_dir(tg, remote_dir + '/templates')
+    """
+    if not remote_path:
+        return
+    try:
+        tg.exec_command('mkdir -p "{}"'.format(remote_path.replace('"', '\\"')), timeout=5)
+        time.sleep(0.2)
+    except Exception as e:
+        print('  [ensure_remote_dir] mkdir {} failed: {}'.format(remote_path, e))
 
 
 def _sync_frontend_nginx_confd(tg, sftp):
@@ -300,9 +324,9 @@ def _sync_frontend_nginx_confd(tg, sftp):
 
     remote_dir = '{}/gw-frontend/nginx-conf.d'.format(REMOTE_ROOT)
 
-    # R6.91: ensure remote dirs exist (mkdir -p idempotent)
-    tg.exec_command('mkdir -p {0} {0}/templates'.format(remote_dir), timeout=5)
-    time.sleep(0.3)
+    # R6.92a: use generic _ensure_remote_dir helper (was R6.91 ad-hoc)
+    _ensure_remote_dir(tg, remote_dir)
+    _ensure_remote_dir(tg, remote_dir + '/templates')
 
     count = 0
 
@@ -359,11 +383,10 @@ def _sync_frontend_public(sftp):
         print('[frontend-public] {} does not exist - skipping'.format(pub_local))
         return
 
+    # R6.92a: ensure parent dir exists (was sftp.stat+mkdir below)
+    _ensure_remote_dir(tg, pub_remote)
+
     print('[frontend-public] Uploading public/ recursively (R6.80 fix)...')
-    try:
-        sftp.stat(pub_remote)
-    except IOError:
-        sftp.mkdir(pub_remote)
 
     count = {'uploaded': 0, 'same-sha': 0, 'errors': 0}
     for root, dirs, files in os.walk(pub_local):
@@ -439,6 +462,9 @@ def _sync_frontend_root_hashdiff(sftp):
     """
     fw_local = os.path.join(LOCAL_ROOT, 'gw-frontend')
     fw_remote = '{}/gw-frontend'.format(REMOTE_ROOT)
+
+    # R6.92a: ensure gw-frontend root exists (was no mkdir; first-deploy ENOENT risk)
+    _ensure_remote_dir(tg, fw_remote)
 
     SKIP_TOP = {'node_modules', 'dist', 'build', 'public', 'src', '.git',
                  '.vite', '.claude', 'package-lock.json', 'scripts',
@@ -592,9 +618,32 @@ def _frontend_post_rebuild_sanity_check(tg):
 
     env_ok = (env_local_sha is not None and env_remote_sha == env_local_sha) \
         or (env_local_sha is None and not env_remote_exists)
+    env_drift_severity = 'OK'  # R6.92c: 'OK' | 'NOTE' | 'WARNING'
     if not env_ok:
-        print('  [env] DRIFT: local={} remote={} (manual sync required)'.format(
-            env_local_sha or 'NONE', env_remote_sha or 'MISSING'))
+        # R6.92c: default severity = WARNING. If ENV_ACTION=keys and key set
+        # is identical, downgrade to NOTE (expected per [[gw-deepseek-key-split]]:
+        # backend/pipeline use different DEEPSEEK_API_KEY but same KEY NAMES).
+        env_drift_severity = 'WARNING'
+        if ENV_ACTION == 'keys':
+            diff_check = _env_key_diff(tg)
+            if diff_check is not None:
+                added = diff_check.get('added', [])
+                removed = diff_check.get('removed', [])
+                modified = diff_check.get('modified', [])
+                # Key set identical = only values differ = expected (manual key mgmt)
+                if not added and not removed:
+                    env_drift_severity = 'NOTE'
+                    print('  [env] NOTE: SHA DRIFT but key set identical ({} modified, expected per service-specific keys)'.format(
+                        len(modified)))
+                else:
+                    print('  [env] WARNING: DRIFT + key set differs (added={}, removed={}, modified={})'.format(
+                        len(added), len(removed), len(modified)))
+            else:
+                print('  [env] WARNING: DRIFT: local={} remote={} (key-diff failed)'.format(
+                    env_local_sha or 'NONE', env_remote_sha or 'MISSING'))
+        else:
+            print('  [env] WARNING: DRIFT: local={} remote={} (manual sync required, use --env-action keys for detail)'.format(
+                env_local_sha or 'NONE', env_remote_sha or 'MISSING'))
     else:
         print('  [env] OK (sha={})'.format(env_local_sha or 'NONE'))
 
@@ -606,7 +655,8 @@ def _frontend_post_rebuild_sanity_check(tg):
     # reads file content into logs. Backend vs pipeline use different
     # DEEPSEEK_API_KEYs per [[gw-deepseek-key-split]]; auto-sync would break
     # multi-env isolation. So no `--force-env` upload path.
-    if not env_ok and ENV_ACTION == 'keys':
+    # R6.92c: key-level diff detail (only show when DRIFT WARNING, not NOTE)
+    if not env_ok and ENV_ACTION == 'keys' and env_drift_severity == 'WARNING':
         diff = _env_key_diff(tg)
         if diff is not None:
             added = diff.get('added', [])
@@ -619,12 +669,12 @@ def _frontend_post_rebuild_sanity_check(tg):
                 print('    - removed (local only): {}'.format(', '.join(sorted(removed))))
             if modified:
                 print('    ~ modified (value differs): {}'.format(', '.join(sorted(modified))))
-            if not (added or removed or modified):
-                print('    (key set identical; values differ — re-encrypt or manually copy)')
             print('  [env-resolve] manual: scp .env zjlab:{}/.env  '
                   '(verify DEEPSEEK_API_KEY per service)'.format(REMOTE_ROOT))
         else:
             print('  [env-diff] (failed to fetch remote .env for key diff)')
+    elif env_drift_severity == 'NOTE':
+        print('  [env-resolve] expected: backend/pipeline have different DEEPSEEK_API_KEYs per [[gw-deepseek-key-split]]; no action needed')
     return overall
 
 
@@ -753,8 +803,8 @@ def _sync_frontend_src(tg, sftp):
         return
 
     print('[frontend-src] Uploading src/ recursively...')
-    tg.exec_command('mkdir -p {}'.format(src_remote), timeout=5)
-    time.sleep(0.5)
+    # R6.92a: use generic helper (was ad-hoc mkdir)
+    _ensure_remote_dir(tg, src_remote)
 
     count = {'uploaded': 0, 'same-sha': 0, 'errors': 0}
     skip_dirs = {'node_modules', 'dist', 'build', '__pycache__'}
