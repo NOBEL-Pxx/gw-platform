@@ -31,7 +31,7 @@ R6.82 (v4.41): Consolidate R6.79.f + R6.80 fixes into main script:
 
 Usage:
   python sync-to-zjlab.py                       # Full sync
-  python sync-to-zjlab.py frontend              # Frontend only (build/ + docker cp)
+  python sync-to-zjlab.py frontend              # Frontend only (build/ + nginx-html/ bind mount, ~1s)
   python sync-to-zjlab.py frontend --rebuild    # NEW: + src/ + image rebuild
   python sync-to-zjlab.py pipeline              # Python modules only
   python sync-to-zjlab.py config                # Nginx config only
@@ -690,17 +690,23 @@ def _frontend_rebuild_image(tg):
 
 
 def sync_frontend(tg, sftp):
-    print('[frontend] Building...')
-    os.chdir(os.path.join(LOCAL_ROOT, 'gw-frontend'))
-    subprocess.run('npm run build', shell=True)
+    if WITH_BUILD:
+        print('[frontend] Building (npm run build)...')
+        os.chdir(os.path.join(LOCAL_ROOT, 'gw-frontend'))
+        subprocess.run('npm run build', shell=True)
+    else:
+        print('[frontend] --no-build: skipping npm run build (using existing build/)')
 
     dist_dir = os.path.join(LOCAL_ROOT, 'gw-frontend', 'build')
     if not os.path.exists(dist_dir):
         print('[frontend] ERROR: build not found - run npm run build first')
         return
 
-    print('[frontend] Uploading...')
-    tg.exec_command('mkdir -p {}/gw-frontend/build/assets'.format(REMOTE_ROOT), timeout=5)
+    print('[frontend] Uploading to bind-mount source (R6.87a)...')
+    # R6.88: upload to nginx-html/ (bind mount source) instead of build/.
+    # Container reads nginx html directly from this host dir via ./gw-frontend/nginx-html:/usr/share/nginx/html.
+    # No docker cp needed (which is blocked by read_only: true per R6.78u cascade).
+    tg.exec_command('mkdir -p {}/gw-frontend/nginx-html/assets'.format(REMOTE_ROOT), timeout=5)
     time.sleep(1)
 
     count = 0
@@ -709,11 +715,11 @@ def sync_frontend(tg, sftp):
             local = os.path.join(root, fname)
             rel = os.path.relpath(local, dist_dir).replace('\\', '/')
             try:
-                sftp.put(local, '{}/gw-frontend/build/{}'.format(REMOTE_ROOT, rel))
+                sftp.put(local, '{}/gw-frontend/nginx-html/{}'.format(REMOTE_ROOT, rel))
                 count += 1
             except:
                 pass
-    print('[frontend] Uploaded {} files'.format(count))
+    print('[frontend] Uploaded {} files to nginx-html/'.format(count))
 
     # R6.67.1 #4: also upload Dockerfile + entrypoint + nginx config
     if WITH_INFRA:
@@ -732,12 +738,12 @@ def sync_frontend(tg, sftp):
         print('[frontend] Done (image rebuilt + sanity check passed)')
         return
 
-    print('[frontend] Deploying...')
-    tg.exec_command('docker exec gw-frontend find /usr/share/nginx/html/assets -type f -delete', timeout=10)
-    time.sleep(1)
-    tg.exec_command('docker cp {}/gw-frontend/build/. gw-frontend:/usr/share/nginx/html/'.format(REMOTE_ROOT), timeout=30)
+    # R6.88: fast non-rebuild path via bind mount (no docker cp needed).
+    # Old path: docker exec delete + docker cp + nginx reload (~5s, BROKEN by R6.78u).
+    # New path: just nginx reload (~1s, container reads bind mount directly).
+    print('[frontend] Reloading nginx (bind mount auto-reflects)...')
     tg.exec_command('docker exec gw-frontend nginx -s reload', timeout=10)
-    print('[frontend] Done')
+    print('[frontend] Done (fast path)')
 
 
 
@@ -1072,6 +1078,12 @@ if __name__ == '__main__':
                              'package.json + trigger `docker compose build gw-frontend` + '
                              'recreate container. Required after src/ changes that must '
                              'be baked into the image (vs docker cp at runtime).')
+    parser.add_argument('--no-build', dest='with_build', action='store_false',
+                        default=True,
+                        help='R6.88: Skip `npm run build`. Use when build/ is already '
+                             'fresh (e.g. you already ran `npm run build` locally). Saves '
+                             '~30-60s per deploy. Combined with bind-mount fast path '
+                             '(nginx-html SFTP + nginx reload), full sync is ~1-2s end-to-end.')
     parser.add_argument('--env-action', dest='env_action', default='detect',
                         choices=['detect', 'keys'],
                         help='R6.84: .env DRIFT response. "detect" (default) only prints '
@@ -1081,11 +1093,12 @@ if __name__ == '__main__':
     MODE = args.mode
     WITH_INFRA = args.with_infra
     WITH_REBUILD = args.with_rebuild
+    WITH_BUILD = args.with_build
     ENV_ACTION = args.env_action
 
     print('=' * 50)
-    print('GW Sync v4.41  |  Mode: {}  |  Infra: {}  |  Rebuild: {}  |  Env: {}'.format(
-        MODE, 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', ENV_ACTION))
+    print('GW Sync v4.41  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Env: {}'.format(
+        MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', ENV_ACTION))
     print('=' * 50)
 
     ba, tg, sftp = connect()
