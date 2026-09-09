@@ -210,6 +210,57 @@ def _check_unpushed_src_commits():
 
 
 
+
+def _sync_compose_files(tg, sftp):
+    """R6.96 #1: Sync docker-compose.yml + docker-compose.zjlab.yml to zjlab.
+
+    Closes 5th sync-gap family (R6.78y → R6.79 → R6.80 → R6.82 → R6.89 → R6.95):
+    `sync-to-zjlab.py frontend` historically uploaded build/ + nginx config but NOT
+    docker-compose.yml. When local compose added new bind-mounts/volumes (R6.95:
+    ./gw-frontend/nginx-conf.d-bindmount), zjlab's compose still old → force-recreate
+    used stale volume declarations → bind-mount silently missing.
+
+    Default: OFF. Caller must opt-in via `--with-compose` flag (preserves legacy
+    behavior). With compose synced, force-recreate uses up-to-date bind-mount
+    declarations.
+
+    Uploads:
+      - D:\AliCPT\docker-compose.yml         → REMOTE_ROOT/docker-compose.yml
+      - D:\AliCPT\docker-compose.zjlab.yml   → REMOTE_ROOT/docker-compose.zjlab.yml (if exists locally)
+
+    Both files are text-based YAML; we upload as text (CRLF stripped on Windows).
+    SHA256 dedup via _remote_sha256_via_sftp (R6.92a pattern).
+    """
+    uploaded = 0
+    compose_files = [
+        ('docker-compose.yml',         False),  # base compose
+        ('docker-compose.zjlab.yml',   False),  # zjlab-specific overlay (optional)
+    ]
+    for fname, _ in compose_files:
+        local_path = os.path.join(LOCAL_ROOT, fname)
+        if not os.path.exists(local_path):
+            if fname == 'docker-compose.zjlab.yml':
+                # zjlab overlay is optional; skip silently
+                continue
+            print('  [skip] {} does not exist'.format(fname))
+            continue
+        dst = '{}/{}'.format(REMOTE_ROOT, fname)
+        # SHA256 dedup — skip if remote matches local (cheap no-op for unchanged files)
+        try:
+            local_sha = _sha256_file(local_path)
+            remote_sha = _remote_sha256_via_sftp(sftp, dst)
+            if remote_sha == local_sha:
+                continue
+        except Exception:
+            pass  # if SHA check fails (e.g. remote file missing), proceed anyway
+        _upload_text_file(sftp, local_path, dst, strip_crlf=True)
+        uploaded += 1
+    if uploaded:
+        print('[compose] Uploaded {} compose file(s)'.format(uploaded))
+    else:
+        print('[compose] No compose files to upload (already in sync)')
+
+
 def _sync_frontend_infra(tg, sftp):
     """R6.67.1 #4: sync Dockerfile + docker-entrypoint.sh + nginx.conf + ssl/
     for gw-frontend in addition to build/.
@@ -1022,6 +1073,11 @@ def sync_frontend(tg, sftp):
         _sync_frontend_nginx_confd(tg, sftp)  # R6.89b + R6.91: nginx conf.d/*.conf + templates/*.template → bind mount
         _sync_frontend_nginx_confd_bindmount(tg, sftp)  # R6.95: user-controlled static *.conf (loaded BEFORE conf.d/*.conf)
 
+    # R6.96 #1: opt-in docker-compose.yml sync. Closes 5th sync-gap family.
+    # Must happen AFTER infra uploads (nginx.conf, etc.) but BEFORE force-recreate.
+    if WITH_COMPOSE:
+        _sync_compose_files(tg, sftp)
+
     # R6.79+R6.82: --rebuild flag triggers image rebuild.
     # v4.41: hash-diff root files (incl. index.html) + public/ + src/ + image rebuild.
     # This is the complete fix for the 5-layer v4.17/R6.80 stale-image regression.
@@ -1386,6 +1442,14 @@ if __name__ == '__main__':
                         help='R6.89c: Suppress the staleness warning when --no-build is used and '
                              'src/ has changes newer than build/. Use when you KNOWINGLY skip '
                              'rebuild (e.g., verifying a deploy without src/ changes).')
+    parser.add_argument('--with-compose', dest='with_compose', action='store_true',
+                        default=False,
+                        help='R6.96 #1: Also upload docker-compose.yml + docker-compose.zjlab.yml. '
+                             'Required when local compose changes add new bind-mounts/volumes '
+                             '(e.g. R6.95 nginx-conf.d-bindmount/ volume). Default: OFF to preserve '
+                             'legacy behavior.')
+    parser.add_argument('--no-compose', dest='with_compose', action='store_false',
+                        help='R6.96 #1: Skip compose upload (default behavior, kept for clarity).')
     parser.add_argument('--env-action', dest='env_action', default='detect',
                         choices=['detect', 'keys'],
                         help='R6.84: .env DRIFT response. "detect" (default) only prints '
@@ -1397,10 +1461,11 @@ if __name__ == '__main__':
     WITH_REBUILD = args.with_rebuild
     WITH_BUILD = args.with_build
     ENV_ACTION = args.env_action
+    WITH_COMPOSE = args.with_compose  # R6.96 #1
 
     print('=' * 50)
-    print('GW Sync v4.41  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Env: {}'.format(
-        MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', ENV_ACTION))
+    print('GW Sync v4.42  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Compose: {}  |  Env: {}'.format(
+        MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', 'ON' if WITH_COMPOSE else 'OFF', ENV_ACTION))
     print('=' * 50)
 
     ba, tg, sftp = connect()
