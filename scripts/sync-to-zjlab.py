@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GravitationalWave Platform — Sync Script (v4.43)
+GravitationalWave Platform — Sync Script (v4.46)
 ================================================
 Sync local code to ZhiJiang Lab remote server via SSH bastion.
 
@@ -24,6 +24,11 @@ R6.82 (v4.41): Consolidate R6.79.f + R6.80 fixes into main script:
    - `_backend_post_rebuild_sanity_check()`: port 8093 Spring Boot (v3/api-docs + swagger-ui; image alicpt-divs-gw-backend) (R6.83o)
      (catches stale-image regression in 1 second - prevents R6.78x 8h debug)
    - `verify()`: adds frontend version sanity check (must match local) (2026-09-08).
+   - R6.99 #3 (`_sync_config_certs()`): sync D:\\AliCPT\\config\\certs\\**\\*.{key,crt,pem} -> /home/zjlab/gravitationalwave-v4.31/config/certs/.
+     Closes R6.98 audit finding on /home/zjlab/certs.d/10.101.12.128/client.key orphan.
+     Iron rules enforced: zjlab-private-key-mode (chmod 600 + chown zjlab:zjlab) + zjlab-out-of-scope-cleanup
+     (skip agentscope|dify|opik|langfuse|graphrag|joyagent|DeepResearch|open_deep_research|serfer-mcp-server|LocalAI|.cursor-server).
+     Runs inside sync_frontend() WITH_INFRA block alongside _sync_frontend_nginx_confd_bindmount().
    - Add `--rebuild` flag to frontend mode: also uploads src/ + triggers
      `docker compose build gw-frontend` (was missing - only build/ synced).
    - Add new `compose` mode: syncs docker-compose.yml + docker-compose.zjlab.yml
@@ -466,6 +471,120 @@ def _sync_frontend_nginx_confd_bindmount(tg, sftp):
     if count:
         print('[nginx-confd-bindmount] Uploaded {} conf files (R6.95)'.format(count))
     return count
+
+
+
+
+
+# R6.99 #3: Out-of-scope path skip list (per zjlab-out-of-scope-cleanup iron rule).
+# Any sync helper touching /home/zjlab/* MUST skip paths containing these substrings.
+# Reason: agentscope/dify/opik/etc. are unrelated projects that share the zjlab host
+# but are not part of gw-platform. Syncing their configs would cross project boundaries.
+_OUT_OF_SCOPE_PATH_PATTERNS = (
+    'agentscope', 'dify', 'opik', 'langfuse', 'graphrag',
+    'joyagent', 'DeepResearch', 'open_deep_research',
+    'serfer-mcp-server', 'LocalAI', '.cursor-server',
+)
+
+
+def _is_out_of_scope(rel_path):
+    """R6.99 #3: Return True if rel_path matches out-of-scope skip list.
+
+    Per zjlab-out-of-scope-cleanup iron rule (added R6.98 audit).
+    """
+    return any(pat in rel_path for pat in _OUT_OF_SCOPE_PATH_PATTERNS)
+
+
+def _sync_config_certs(tg, sftp):
+    """R6.99 #3: Sync non-gw-platform certs from D:\\AliCPT\\config\\certs\\ to zjlab.
+
+    Source dir (local):  D:\\AliCPT\\config\\certs\\**\\*.{key,crt,pem}
+    Target dir (remote): /home/zjlab/gravitationalwave-v4.31/config/certs/...
+
+    Why this exists (R6.98 audit finding):
+      - /home/zjlab/certs.d/10.101.12.128/client.key is a private key outside the
+        gw-platform tree (mode 644 was world-readable; chmod 600 already deployed).
+      - 5th sync-gap audit (R6.98) found this orphan + the rest of /home/zjlab/certs.d/
+        was unsynced (no local source of truth).
+      - This helper establishes D:\\AliCPT\\config\\certs\\ as the source-of-truth
+        for non-gw-platform certs that zjlab needs.
+
+    Iron rules (MUST follow):
+      - zjlab-private-key-mode: every uploaded *.key MUST end up chmod 600 + chown zjlab:zjlab.
+      - zjlab-out-of-scope-cleanup: skip paths matching agentscope|dify|opik|... (see helper above).
+      - protect-user-config: NEVER auto-write to /home/zjlab/ without explicit USER auth.
+        This helper only runs inside sync_frontend() when WITH_INFRA=True (which the
+        user already opted into).
+
+    Pattern: matches _sync_frontend_nginx_confd_bindmount() (line 421).
+    """
+    certs_dir = os.path.join(LOCAL_ROOT, 'config', 'certs')
+    if not os.path.isdir(certs_dir):
+        print('  [config-certs] source dir {} does not exist (skip)'.format(certs_dir))
+        return 0
+
+    remote_root_dir = '{}/config/certs'.format(REMOTE_ROOT)
+    _ensure_remote_dir(tg, remote_root_dir)
+
+    count = 0
+    key_count = 0
+    skipped = 0
+
+    for root, dirs, files in os.walk(certs_dir):
+        for fname in sorted(files):
+            fpath = os.path.join(root, fname)
+            if not os.path.isfile(fpath):
+                continue
+            if not (fname.endswith('.key') or fname.endswith('.crt') or fname.endswith('.pem')):
+                continue
+
+            rel = os.path.relpath(fpath, certs_dir).replace('\\', '/')
+
+            # R6.99 #3: out-of-scope skip (zjlab-out-of-scope-cleanup iron rule)
+            if _is_out_of_scope(rel):
+                print('  [config-certs] skip (out-of-scope): {}'.format(rel))
+                skipped += 1
+                continue
+
+            # Mirror directory structure under remote config/certs/
+            remote_dir = os.path.dirname('{}/{}'.format(remote_root_dir, rel))
+            if remote_dir and remote_dir != remote_root_dir:
+                _ensure_remote_dir(tg, remote_dir)
+
+            dst = '{}/{}'.format(remote_root_dir, rel)
+            _upload_binary_file(sftp, fpath, dst)
+            count += 1
+            if fname.endswith('.key'):
+                key_count += 1
+
+    # zjlab-private-key-mode iron rule: chmod 600 + chown zjlab:zjlab on all .key files.
+    # BOTH ops required (defense-in-depth: even if ACL masks allow read, owner-only is set).
+    # Per security review (R6.99): silent swallow of chmod/chown failure would defeat the rule.
+    # We track failure in `chmod_failed` and return -1 so caller (sync_frontend WITH_INFRA) can decide to abort.
+    chmod_failed = False
+    if key_count > 0:
+        cmd = 'find {}/ -type f -name "*.key" -exec chmod 600 {{}} \\; -exec chown zjlab:zjlab {{}} \\;'.format(remote_root_dir)
+        try:
+            stdout, stderr, exit_code = tg.exec_command(cmd, timeout=15)
+            time.sleep(0.3)
+            if exit_code != 0:
+                chmod_failed = True
+                print('  [config-certs] chmod/chown returned exit={}: stderr={}'.format(
+                    exit_code, (stderr or b'').decode('utf-8', errors='replace').strip()))
+        except Exception as e:
+            chmod_failed = True
+            print('  [config-certs] chmod/chown EXCEPTION: {}'.format(e))
+
+    if chmod_failed:
+        print('  [config-certs] WARNING: chmod/chown failed for {} .key files; files may be world-readable'.format(key_count))
+        return -1
+
+    if count:
+        print('[config-certs] Uploaded {} cert files ({} .key secured 600)'.format(count, key_count))
+    if skipped:
+        print('[config-certs] Skipped {} out-of-scope files'.format(skipped))
+    return count
+
 
 
 
@@ -1072,6 +1191,7 @@ def sync_frontend(tg, sftp):
         _sync_frontend_infra(tg, sftp)
         _sync_frontend_nginx_confd(tg, sftp)  # R6.89b + R6.91: nginx conf.d/*.conf + templates/*.template → bind mount
         _sync_frontend_nginx_confd_bindmount(tg, sftp)  # R6.95: user-controlled static *.conf (loaded BEFORE conf.d/*.conf)
+        _sync_config_certs(tg, sftp)  # R6.99 #3: non-gw-platform certs (config/certs/); chmod 600 enforced
 
     # R6.96 #1: opt-in docker-compose.yml sync. Closes 5th sync-gap family.
     # Must happen AFTER infra uploads (nginx.conf, etc.) but BEFORE force-recreate.
@@ -1464,7 +1584,7 @@ if __name__ == '__main__':
     WITH_COMPOSE = args.with_compose  # R6.96 #1
 
     print('=' * 50)
-    print('GW Sync v4.42  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Compose: {}  |  Env: {}'.format(
+    print('GW Sync v4.46  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Compose: {}  |  Env: {}'.format(
         MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', 'ON' if WITH_COMPOSE else 'OFF', ENV_ACTION))
     print('=' * 50)
 
