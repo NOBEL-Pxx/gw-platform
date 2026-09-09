@@ -251,17 +251,22 @@ window.addEventListener('message', function(e) {
   setTimeout(hideStatus, 800);
 });
 
-// R6.85b: dedup rapid clicks on the same plot. Firefly's internal handler
-// opens a popup window per click — double-clicks stack. Suppress 2nd click
-// on the SAME plot within 500ms. Different plots are unaffected.
+// R6.86b: Firefly click dedup threshold 500ms → 800ms.
+// Reason: 500ms was too aggressive — rapid clicks on intentionally different
+// plots within ~600ms were being suppressed. 800ms gives more headroom for
+// intentional fast clicks while still well below 1s where users would wonder
+// "did the click register?". Still well above typical OS double-click
+// threshold (300-500ms), so accidental double-clicks are still suppressed.
+// Capture-phase listener unchanged — only threshold changed.
 (function() {
   var lastClickedPlot = null;
   var lastClickedAt = 0;
+  var DEDUP_MS = 800;
   document.addEventListener('click', function(e) {
     var plot = e.target && e.target.closest && e.target.closest('.plot-wrapper');
     if (!plot) return;
     var now = Date.now();
-    if (plot === lastClickedPlot && (now - lastClickedAt) < 500) {
+    if (plot === lastClickedPlot && (now - lastClickedAt) < DEDUP_MS) {
       e.stopPropagation();
       e.preventDefault();
       if (window.DEBUG) console.log('[Firefly] dedup click on plot', plot.id);
