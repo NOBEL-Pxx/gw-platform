@@ -363,6 +363,39 @@ def _frontend_post_rebuild_sanity_check(tg):
     img_age = o.read().decode(errors='replace').strip()
     print('  [img] CreatedAt: {}'.format(img_age or 'NONE'))
 
+    # R6.87b: firefly-viewer.html DEDUP_MS sanity check (catches R6.86c-3 stale-html bug)
+    # Fetch served firefly-viewer.html, extract DEDUP_MS constant, compare to local.
+    firefly_ok = True
+    dedup_local = None
+    dedup_served = None
+    ff_local_path = os.path.join(LOCAL_ROOT, 'gw-frontend', 'public', 'firefly-viewer.html')
+    if os.path.exists(ff_local_path):
+        import re as _re_ff
+        m = _re_ff.search(r'DEDUP_MS\s*=\s*(\d+)', open(ff_local_path, encoding='utf-8').read())
+        if m:
+            dedup_local = int(m.group(1))
+    try:
+        _, o, _ = tg.exec_command(
+            'curl -skL --max-time 5 http://localhost:6001/firefly-viewer.html', timeout=10)
+        ff_served_body = o.read().decode(errors='replace')
+        import re as _re_ff2
+        m = _re_ff2.search(r'DEDUP_MS\s*=\s*(\d+)', ff_served_body)
+        if m:
+            dedup_served = int(m.group(1))
+    except Exception:
+        pass
+    if dedup_local is None:
+        print('  [firefly] local file missing: {}'.format(ff_local_path))
+        firefly_ok = False
+    elif dedup_served is None:
+        print('  [firefly] served DEDUP_MS not found (stale build?)')
+        firefly_ok = False
+    elif dedup_local != dedup_served:
+        print('  [firefly] DEDUP_MS MISMATCH local={} served={}'.format(dedup_local, dedup_served))
+        firefly_ok = False
+    else:
+        print('  [firefly] DEDUP_MS={} OK'.format(dedup_local))
+
     # R6.83 (Layer 6): .env fingerprint check (detect secret drift, no content sync)
     import hashlib
     env_local_sha = None
@@ -388,7 +421,7 @@ def _frontend_post_rebuild_sanity_check(tg):
     else:
         print('  [env] OK (sha={})'.format(env_local_sha or 'NONE'))
 
-    overall = ok_version and logos_ok and env_ok
+    overall = ok_version and logos_ok and env_ok and firefly_ok
     print('[sanity-check] {}'.format('OK' if overall else 'FAILED'))
 
     # R6.84: When DRIFT detected, optionally show key-level diff (no values).

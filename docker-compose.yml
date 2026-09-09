@@ -463,6 +463,16 @@ services:
       - /var/log/nginx
       - /tmp
       - /etc/nginx/conf.d
+    # R6.87a: bind-mount /usr/share/nginx/html from host dir. Closes R6.78u cascade
+    # by allowing `docker cp` into nginx html (read_only + tmpfs shadows image content
+    # AND blocks docker cp at daemon level — bind mount is the only path that works).
+    # Host dir lives at /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-html/
+    # (must be created + populated with image content before first deploy).
+    # sync-to-zjlab.py updates this dir then `nginx -s reload` for ms-level deploys.
+    # Image still has baked-in fallback (if host dir missing, container starts empty
+    # which is broken — always populate host dir before first recreate).
+    volumes:
+      - ./gw-frontend/nginx-html:/usr/share/nginx/html
     networks:
       - gw-net
     # No gw-db — frontend cannot directly access Mongo/ES

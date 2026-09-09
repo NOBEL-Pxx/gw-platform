@@ -62,7 +62,7 @@ services:
       # - /usr/local/etc/redis/redis.acl
       # R6.71 #3 single-password fallback:
       - --requirepass
-      - ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
+      - ${REDIS_PASSWORD:-dev_default_redis_password}
 
   # ── 应用层：仅 gw-net 内部通信，由 gw-frontend nginx 反代 ──
   gw-firefly:
@@ -76,7 +76,7 @@ services:
       rate.limit.refill-minutes: 1
       JAVA_OPTS: "-Xms1g -Xmx3g"
       # R6.71 #3: pass Redis password for Spring Data Redis + Bucket4j Lettuce
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env on zjlab}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev_default_redis_password}
       # R6.73 #4: Redis ACL username (default: app user, empty string = single-user mode)
       REDIS_USERNAME: ${REDIS_USERNAME:-}
       # R6.73 #4: Bucket4j URI now includes username (defaults to empty for backward compat)
