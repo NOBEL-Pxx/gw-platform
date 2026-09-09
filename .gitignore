@@ -47,6 +47,12 @@ docker-cache/
 
 # Local-only deploy artifacts
 deploy.local/
+
+# R6.100 #5: deploy audit record (machine-specific, NEVER commit)
+#   - write-deploy-record.py writes D:\AliCPT\.deploy-audit\last-deploy.json
+#   - Timestamps + operator field + git HEAD make it per-machine state
+#   - Remote copy ~/last-deploy.json on zjlab is NOT in this dir
+.deploy-audit/
 *.local.json
 *.local.yml
 

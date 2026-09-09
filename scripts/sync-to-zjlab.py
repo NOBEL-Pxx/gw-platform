@@ -28,7 +28,7 @@ R6.82 (v4.41): Consolidate R6.79.f + R6.80 fixes into main script:
      Closes R6.98 audit finding on /home/zjlab/certs.d/10.101.12.128/client.key orphan.
      Iron rules enforced: zjlab-private-key-mode (chmod 600 + chown zjlab:zjlab) + zjlab-out-of-scope-cleanup
      (skip agentscope|dify|opik|langfuse|graphrag|joyagent|DeepResearch|open_deep_research|serfer-mcp-server|LocalAI|.cursor-server).
-     Runs inside sync_frontend() WITH_INFRA block alongside _sync_frontend_nginx_confd_bindmount().
+     Runs inside sync_frontend() WITH_INFRA block alongside _sync_frontend_nginx_confd_runtime().
    - Add `--rebuild` flag to frontend mode: also uploads src/ + triggers
      `docker compose build gw-frontend` (was missing - only build/ synced).
    - Add new `compose` mode: syncs docker-compose.yml + docker-compose.zjlab.yml
@@ -47,12 +47,14 @@ Usage:
 Bastion: 192.168.10.10:60022 -> 10.107.207.103:22
 """
 import paramiko, time, os, sys, io, subprocess, hashlib, argparse
+from pathlib import Path
 
 # === Configuration ===
 BASTION = ('192.168.10.10', 60022, 'ZJWB260819', 'Temp@ecf4f6')
 SERVER  = ('10.107.207.103', 22, 'zjlab', 'fast@zjlab')
 REMOTE_ROOT = '/home/zjlab/gravitationalwave-v4.31'
 LOCAL_ROOT  = r'D:\AliCPT'
+SCRIPTS_DIR  = Path(__file__).resolve().parent  # R6.100 #1 CRITICAL fix: post-deploy hook needs SCRIPTS_DIR
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else 'full'
 # R6.84: --env-action flag. Overridden in main() before sanity check runs.
@@ -222,7 +224,7 @@ def _sync_compose_files(tg, sftp):
     Closes 5th sync-gap family (R6.78y → R6.79 → R6.80 → R6.82 → R6.89 → R6.95):
     `sync-to-zjlab.py frontend` historically uploaded build/ + nginx config but NOT
     docker-compose.yml. When local compose added new bind-mounts/volumes (R6.95:
-    ./gw-frontend/nginx-conf.d-bindmount), zjlab's compose still old → force-recreate
+    ./gw-frontend/nginx-conf.d/runtime), zjlab's compose still old → force-recreate
     used stale volume declarations → bind-mount silently missing.
 
     Default: OFF. Caller must opt-in via `--with-compose` flag (preserves legacy
@@ -423,20 +425,20 @@ def _sync_frontend_nginx_confd(tg, sftp):
     return count
 
 
-def _sync_frontend_nginx_confd_bindmount(tg, sftp):
-    """R6.95: Sync nginx conf.d/bindmount/*.conf to bind-mount source.
+def _sync_frontend_nginx_confd_runtime(tg, sftp):
+    """R6.95 (R6.100 renamed: bindmount -> runtime): Sync nginx conf.d/runtime/*.conf to bind-mount source.
 
-    bindmount/ bind-mount source: /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-conf.d-bindmount/
-                  container: /etc/nginx/conf.d/bindmount/  (loaded BEFORE conf.d/*.conf in nginx.conf)
+    runtime/ bind-mount source: /home/zjlab/gravitationalwave-v4.31/gw-frontend/nginx-conf.d/runtime/
+                  container: /etc/nginx/conf.d/runtime/  (loaded BEFORE conf.d/*.conf in nginx.conf)
 
-    Source dir (local): D:\AliCPT\gw-frontend\nginx-conf.d-bindmount\*.conf
+    Source dir (local): D:\AliCPT\gw-frontend\nginx-conf.d/runtime/*.conf
 
     Why separate from conf.d/:
       - conf.d/ is bind-mounted but ALSO iterated by entrypoint envsubst for *.template files.
         Anything in conf.d/ that has the same name as a generated template conflicts.
-      - bindmount/ is for STATIC *.conf files only (no envsubst). Drop a file in, no rebuild,
+      - runtime/ is for STATIC *.conf files only (no envsubst). Drop a file in, no rebuild,
         no template iteration, just `docker kill --signal=HUP gw-frontend` to activate (R6.96d).
-      - nginx loads bindmount/*.conf BEFORE conf.d/*.conf, so user *.conf here can shadow
+      - nginx loads runtime/*.conf BEFORE conf.d/*.conf, so user *.conf here can shadow
         or override image-baked defaults for matching server_names.
 
     Use cases:
@@ -445,23 +447,23 @@ def _sync_frontend_nginx_confd_bindmount(tg, sftp):
       - Debug endpoints
       - Anything that needs ms-level deployment without image rebuild
 
-    R6.95 first-deploy fix: ensure remote bindmount/ dir exists before upload.
+    R6.95 first-deploy fix: ensure remote runtime/ dir exists before upload.
     """
-    bindmount_local = os.path.join(LOCAL_ROOT, 'gw-frontend', 'nginx-conf.d-bindmount')
-    if not os.path.isdir(bindmount_local):
-        print('  [nginx-confd-bindmount] source dir {} does not exist (skip)'.format(bindmount_local))
+    runtime_local = LOCAL_ROOT + '/gw-frontend/nginx-conf.d/runtime'
+    if not os.path.isdir(runtime_local):
+        print('  [nginx-confd-runtime] source dir {} does not exist (skip)'.format(runtime_local))
         return 0
 
-    remote_dir = '{}/gw-frontend/nginx-conf.d-bindmount'.format(REMOTE_ROOT)
+    remote_dir = '{}/gw-frontend/nginx-conf.d/runtime'.format(REMOTE_ROOT)
 
     # R6.92a: ensure remote parent dir exists before sftp.put
     _ensure_remote_dir(tg, remote_dir)
 
     count = 0
-    for fname in sorted(os.listdir(bindmount_local)):
+    for fname in sorted(os.listdir(runtime_local)):
         if not fname.endswith('.conf'):
             continue
-        fpath = os.path.join(bindmount_local, fname)
+        fpath = os.path.join(runtime_local, fname)
         if not os.path.isfile(fpath):
             continue
         dst = '{}/{}'.format(remote_dir, fname)
@@ -469,7 +471,7 @@ def _sync_frontend_nginx_confd_bindmount(tg, sftp):
         count += 1
 
     if count:
-        print('[nginx-confd-bindmount] Uploaded {} conf files (R6.95)'.format(count))
+        print('[nginx-confd-runtime] Uploaded {} conf files (R6.95)'.format(count))
     return count
 
 
@@ -516,7 +518,7 @@ def _sync_config_certs(tg, sftp):
         This helper only runs inside sync_frontend() when WITH_INFRA=True (which the
         user already opted into).
 
-    Pattern: matches _sync_frontend_nginx_confd_bindmount() (line 421).
+    Pattern: matches _sync_frontend_nginx_confd_runtime() (line 421).
     """
     certs_dir = os.path.join(LOCAL_ROOT, 'config', 'certs')
     if not os.path.isdir(certs_dir):
@@ -1190,7 +1192,7 @@ def sync_frontend(tg, sftp):
     if WITH_INFRA:
         _sync_frontend_infra(tg, sftp)
         _sync_frontend_nginx_confd(tg, sftp)  # R6.89b + R6.91: nginx conf.d/*.conf + templates/*.template → bind mount
-        _sync_frontend_nginx_confd_bindmount(tg, sftp)  # R6.95: user-controlled static *.conf (loaded BEFORE conf.d/*.conf)
+        _sync_frontend_nginx_confd_runtime(tg, sftp)  # R6.95: user-controlled static *.conf (loaded BEFORE conf.d/*.conf)
         _sync_config_certs(tg, sftp)  # R6.99 #3: non-gw-platform certs (config/certs/); chmod 600 enforced
 
     # R6.96 #1: opt-in docker-compose.yml sync. Closes 5th sync-gap family.
@@ -1527,6 +1529,150 @@ def verify(tg):
     print('[verify] {}'.format('ALL OK' if ok else 'WARNING: issues found'))
 
 
+def _post_deploy_hook(post_deploy_on, post_deploy_remote, post_deploy_smoke):
+    """R6.100 #1: Run write-deploy-record.py + zsmoke.py after successful sync.
+
+    Wired into main() right after verify(tg). All 3 flags default OFF
+    (r678-classifier-boundary) so existing deploy workflow is unchanged.
+
+    Flags:
+      post_deploy_on (bool): Master switch. If False, do nothing.
+      post_deploy_remote (bool): Pass --remote to write-deploy-record.py
+        (writes to ~/last-deploy.json on zjlab; protect-user-config gating).
+      post_deploy_smoke (bool): Also run zsmoke.py --read-remote --no-fail
+        after writing the audit record (verifies record is consistent).
+
+    Returns:
+      (record_rc, smoke_rc): subprocess exit codes. Caller can decide whether
+        to surface as deploy warning.
+
+    Iron rules:
+      - r678-classifier-boundary: master switch is OFF by default.
+      - protect-user-config: --remote flag (post_deploy_remote) is independent
+        opt-in. Even with post_deploy_on=True, no zjlab write happens without it.
+      - r677-amend-force-push: uses `git -C D:\AliCPT rev-parse HEAD` — NEVER
+        fabricates a SHA.
+    """
+    if not post_deploy_on:
+        print('[post-deploy] skipped (--with-post-deploy not set)')
+        return (None, None)
+
+    print('[post-deploy] writing deploy audit record...')
+
+    # R6.100 deploy review HIGH #5: refuse if working tree is dirty.
+    # Audit record describes git HEAD but sync uploads dirty tree if not committed yet.
+    # Iron rule: r677-amend-force-push -- never record SHA for uncommitted tree.
+    try:
+        status_proc = subprocess.run(
+            ['git', '-C', r'D:\AliCPT', 'status', '--porcelain'],
+            capture_output=True, text=True, timeout=10,
+        )
+        dirty = status_proc.stdout.strip()
+        if dirty:
+            print('[post-deploy] ERROR: working tree has uncommitted changes:')
+            for line in dirty.splitlines()[:20]:
+                print('  {}'.format(line))
+            if len(dirty.splitlines()) > 20:
+                print('  ... ({} more lines)'.format(len(dirty.splitlines()) - 20))
+            print('[post-deploy] Commit first, then re-run with --with-post-deploy.')
+            return (1, None)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print('[post-deploy] WARN: git status check failed: {}; proceeding without dirty guard'.format(e))
+
+    # 1. Resolve commit SHA from local git (r677-amend-force-push: verifiable SHA only).
+    try:
+        sha_proc = subprocess.run(
+            ['git', '-C', r'D:\AliCPT', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, timeout=10,
+        )
+        sha = sha_proc.stdout.strip() if sha_proc.returncode == 0 else ''
+        if not sha:
+            print('[post-deploy] ERROR: cannot resolve git HEAD SHA; aborting hook')
+            return (1, None)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print('[post-deploy] ERROR: git rev-parse failed: {}'.format(e))
+        return (1, None)
+
+    # 2. Collect changed files in HEAD commit (vs HEAD~1; falls back to HEAD-only for root commits).
+    try:
+        diff_proc = subprocess.run(
+            ['git', '-C', r'D:\AliCPT', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'],
+            capture_output=True, text=True, timeout=10,
+        )
+        if diff_proc.returncode != 0 or not diff_proc.stdout.strip():
+            # Root commit: use git ls-tree
+            ls_proc = subprocess.run(
+                ['git', '-C', r'D:\AliCPT', 'ls-tree', '--name-only', '-r', 'HEAD'],
+                capture_output=True, text=True, timeout=10,
+            )
+            files = [f for f in ls_proc.stdout.splitlines() if f.strip()]
+        else:
+            files = [f for f in diff_proc.stdout.splitlines() if f.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print('[post-deploy] WARN: git diff-tree failed: {}; files=[]'.format(e))
+        files = []
+
+    # 3. Optionally run zsmoke.py --read-remote --no-fail FIRST (MEDIUM #6 fix).
+    # Running smoke before the audit record ensures we capture smoketest status
+    # in the audit. Previously smoke ran AFTER the audit, so a FAIL was not recorded.
+    smoke_rc = None
+    if post_deploy_smoke:
+        zs = SCRIPTS_DIR / 'zsmoke.py'
+        if not zs.exists():
+            print('[post-deploy] WARN: {} not found; skipping smoke'.format(zs))
+            smoke_rc = 3  # zsmoke convention: 3 = couldn't run
+        else:
+            smoke_argv = [sys.executable, str(zs), '--read-remote', '--no-fail']
+            print('[post-deploy] exec: {}'.format(' '.join(smoke_argv)))
+            try:
+                smoke_proc = subprocess.run(smoke_argv, timeout=120)
+                smoke_rc = smoke_proc.returncode
+            except subprocess.TimeoutExpired:
+                print('[post-deploy] WARN: zsmoke.py timed out after 120s')
+                smoke_rc = 124
+            except (FileNotFoundError, OSError) as e:
+                print('[post-deploy] WARN: zsmoke.py exec failed: {}'.format(e))
+                smoke_rc = 3
+            # --no-fail means exit 0 even on FAIL; non-zero here = could not run (zkb import etc.)
+            print('[post-deploy] smoke exit {}'.format(smoke_rc))
+
+    # 4. Invoke write-deploy-record.py (with --smoketest if smoke ran)
+    wdr = SCRIPTS_DIR / 'write-deploy-record.py'
+    if not wdr.exists():
+        print('[post-deploy] ERROR: {} not found'.format(wdr))
+        return (1, smoke_rc)
+
+    wdr_argv = [
+        sys.executable, str(wdr),
+        '--commit', sha,
+        '--files', ','.join(files) if files else '(no-files)',
+    ]
+    if post_deploy_remote:
+        wdr_argv.append('--remote')
+    if smoke_rc is not None:
+        # write-deploy-record.py expects --smoketest=PASS|FAIL|WARN|SKIP|errorcode
+        wdr_argv.append('--smoketest={}'.format(smoke_rc))
+
+    print('[post-deploy] exec: {}'.format(' '.join(wdr_argv)))
+    try:
+        record_proc = subprocess.run(wdr_argv, timeout=30)
+        record_rc = record_proc.returncode
+    except subprocess.TimeoutExpired:
+        print('[post-deploy] ERROR: write-deploy-record.py timed out after 30s')
+        record_rc = 124
+    except (FileNotFoundError, OSError) as e:
+        print('[post-deploy] ERROR: write-deploy-record.py exec failed: {}'.format(e))
+        record_rc = 1
+
+    if record_rc == 0:
+        target = 'local+remote' if post_deploy_remote else 'local-only'
+        print('[post-deploy] OK audit record written ({})'.format(target))
+    else:
+        print('[post-deploy] FAIL write-deploy-record.py exited {}'.format(record_rc))
+
+    return (record_rc, smoke_rc)
+
+
 # === Main ===
 if __name__ == '__main__':
     # R6.67.1 #4: parse --with-infra / --no-infra (default ON).
@@ -1566,7 +1712,7 @@ if __name__ == '__main__':
                         default=False,
                         help='R6.96 #1: Also upload docker-compose.yml + docker-compose.zjlab.yml. '
                              'Required when local compose changes add new bind-mounts/volumes '
-                             '(e.g. R6.95 nginx-conf.d-bindmount/ volume). Default: OFF to preserve '
+                             '(e.g. R6.95 nginx-conf.d/runtime/ volume). Default: OFF to preserve '
                              'legacy behavior.')
     parser.add_argument('--no-compose', dest='with_compose', action='store_false',
                         help='R6.96 #1: Skip compose upload (default behavior, kept for clarity).')
@@ -1575,6 +1721,19 @@ if __name__ == '__main__':
                         help='R6.84: .env DRIFT response. "detect" (default) only prints '
                              'OK/DRIFT. "keys" additionally prints KEY-LEVEL diff '
                              '(added/removed/modified key names, NEVER values).')
+
+    parser.add_argument('--with-post-deploy', dest='with_post_deploy', action='store_true',
+                        default=False,
+                        help='R6.100 #1: After successful sync, write deploy audit record '
+                             'via write-deploy-record.py (default: OFF per r678-classifier-boundary).')
+    parser.add_argument('--post-deploy-remote', dest='post_deploy_remote', action='store_true',
+                        default=False,
+                        help='R6.100 #1: With --with-post-deploy, also write audit to '
+                             '~/last-deploy.json on zjlab (protect-user-config gating).')
+    parser.add_argument('--post-deploy-smoke', dest='post_deploy_smoke', action='store_true',
+                        default=False,
+                        help='R6.100 #1: With --with-post-deploy, also run zsmoke.py '
+                             '--read-remote --no-fail (READ-ONLY verification).')
     args = parser.parse_args()
     MODE = args.mode
     WITH_INFRA = args.with_infra
@@ -1582,10 +1741,13 @@ if __name__ == '__main__':
     WITH_BUILD = args.with_build
     ENV_ACTION = args.env_action
     WITH_COMPOSE = args.with_compose  # R6.96 #1
+    WITH_POST_DEPLOY = args.with_post_deploy  # R6.100 #1
+    POST_DEPLOY_REMOTE = args.post_deploy_remote  # R6.100 #1
+    POST_DEPLOY_SMOKE = args.post_deploy_smoke  # R6.100 #1
 
     print('=' * 50)
-    print('GW Sync v4.46  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Compose: {}  |  Env: {}'.format(
-        MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', 'ON' if WITH_COMPOSE else 'OFF', ENV_ACTION))
+    print('GW Sync v4.46 + R6.100  |  Mode: {}  |  Build: {}  |  Infra: {}  |  Rebuild: {}  |  Compose: {}  |  Env: {}  |  PostDeploy: {}'.format(
+        MODE, 'ON' if WITH_BUILD else 'SKIP', 'ON' if WITH_INFRA else 'OFF', 'ON' if WITH_REBUILD else 'OFF', 'ON' if WITH_COMPOSE else 'OFF', ENV_ACTION, 'ON' if args.with_post_deploy else 'OFF'))
     print('=' * 50)
 
     ba, tg, sftp = connect()
@@ -1601,6 +1763,13 @@ if __name__ == '__main__':
         if MODE == 'compose':
             sync_compose(tg, sftp)
         verify(tg)
+        # R6.100 #1: post-deploy hook (write audit record + optional smoke).
+        # MEDIUM #7: defensive MODE gate — only fire for sync modes that actually
+        # uploaded something. MODE choices already exclude 'verify', but be explicit.
+        if MODE in ('full', 'frontend', 'pipeline', 'config', 'jar', 'compose'):
+            _post_deploy_hook(WITH_POST_DEPLOY, POST_DEPLOY_REMOTE, POST_DEPLOY_SMOKE)
+        else:
+            print('[post-deploy] skipped (MODE={} not a sync mode)'.format(MODE))
         print('\n[DONE]')
     finally:
         sftp.close()

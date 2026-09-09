@@ -485,12 +485,12 @@ services:
       # corresponding *.conf in /etc/nginx/conf.d/. Lets user add custom envsubst-able
       # config without rebuilding the gw-frontend image.
       - ./gw-frontend/nginx-conf.d/templates:/etc/nginx/conf.d/templates
-      # R6.95: bind-mount /etc/nginx/conf.d/bindmount/ for USER-controlled static *.conf.
+      # R6.100: bind-mount /etc/nginx/conf.d/runtime/ for USER-controlled static *.conf.
       # Loaded BEFORE conf.d/*.conf in nginx.conf so user *.conf take precedence for
       # matching server_names. Unlike templates/, this dir holds raw *.conf (no
       # envsubst). Use for smoke-test endpoints, feature toggles, debug configs that
       # don't need image rebuild + don't need envsubst vars.
-      - ./gw-frontend/nginx-conf.d-bindmount:/etc/nginx/conf.d/bindmount
+      - ./gw-frontend/nginx-conf.d/runtime:/etc/nginx/conf.d/runtime
       # R6.97 #1: bind-mount nginx.conf itself. Closes R6.96e — changes to nginx.conf
       # no longer require `docker compose build gw-frontend` + force-recreate.
       # Reads from ./gw-frontend/nginx.conf on host = /etc/nginx/nginx.conf in container
