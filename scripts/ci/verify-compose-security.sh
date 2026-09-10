@@ -61,8 +61,9 @@ check "SPRING_DATA_MONGODB_USERNAME wired in gw-backend" \
       "grep -c 'SPRING_DATA_MONGODB_USERNAME' docker-compose.yml" \
       ">0"
 
-check "SPRING_DATA_MONGODB_PASSWORD env var injection" \
-      "grep -c 'SPRING_DATA_MONGODB_PASSWORD.*MONGO_APP_PASSWORD' docker-compose.yml" \
+# R6.79: accept either relaxed-binding (legacy) or raw env var forwarding
+check "MongoDB password env var forwarded to container" \r
+      "grep -cE '(SPRING_DATA_MONGODB_PASSWORD.*MONGO_APP_PASSWORD|MONGO_APP_PASSWORD:.*\$\{MONGO_APP_PASSWORD:?)' docker-compose.yml" \r
       ">0"
 
 # Check 3: ES password must be env-injected

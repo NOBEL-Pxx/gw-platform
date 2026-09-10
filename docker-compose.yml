@@ -213,7 +213,12 @@ services:
       REDIS_PORT: "6379"
       SPRING_DATA_MONGODB_HOST: mongodb
       SPRING_DATA_MONGODB_USERNAME: gw-app
-      SPRING_DATA_MONGODB_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD must be set}
+      # R6.79: pass raw MONGO_APP_PASSWORD env var (app reads ${MONGO_APP_PASSWORD} directly in application*.properties)
+      # Previously used SPRING_DATA_MONGODB_PASSWORD relaxed binding, but the actual
+      # env var in .env is MONGO_APP_PASSWORD -- direct pass eliminates indirection.
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?MONGO_APP_PASSWORD must be set in .env}
+      # R6.79: JWT_SECRET must be set (no more silent default)
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       # gw-app lives in the `admin` DB (see init_mongo.js), so authenticate there,
       # not against the application DB (gravitationalwave).
       SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE: admin

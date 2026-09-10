@@ -11,7 +11,10 @@ services:
       - SPRING_DATA_MONGODB_HOST=mongodb-service
       - SPRING_DATA_MONGODB_PORT=27017
       - SPRING_DATA_MONGODB_USERNAME=admin
-      - SPRING_DATA_MONGODB_PASSWORD=${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
+      # R6.79: pass raw MONGO_APP_PASSWORD env var (matches root docker-compose.yml + .env convention)
+      - MONGO_APP_PASSWORD=${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in .env}
+      # R6.79: JWT_SECRET defensive check (no default fallback)
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env}
       - SPRING_DATA_MONGODB_DATABASE=adcp
       - SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE=admin
       - SPRING_DATA_ELASTICSEARCH_REPOSITORIES_ENABLED=true
