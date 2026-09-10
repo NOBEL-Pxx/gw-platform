@@ -140,12 +140,12 @@
                                 try {
                                     desc = 'git describe --tags --long --dirty'.execute().text.trim()
                                 } catch (Exception e) {
-                                    getLog().warn('R6.72 git describe failed: ' + e.message)
+                                    println('R6.72 git describe failed: ' + e.message)
                                 }
                                 def propsFile = new File(project.basedir, 'src/main/resources/version.properties')
                                 propsFile.parentFile.mkdirs()
                                 propsFile.text = "app.version=${desc}\n"
-                                getLog().info('R6.72 wrote ' + propsFile + ' = ' + desc)
+                                println('R6.72 wrote ' + propsFile + ' = ' + desc)
                             ]]></source>
                         </configuration>
                     </execution>
