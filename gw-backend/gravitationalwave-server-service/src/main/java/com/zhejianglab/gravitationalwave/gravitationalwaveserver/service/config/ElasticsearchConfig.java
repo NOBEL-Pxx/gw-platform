@@ -28,7 +28,7 @@ public class ElasticsearchConfig {
     @Value("${spring.elasticsearch.username}")
     private String username;
 
-    @Value("${spring.elasticsearch.passwd}")
+    @Value("${spring.elasticsearch.password}")
     private String password;
 
     // Shared low-level RestClient (v4.12: unified — RestHighLevelClient removed)
