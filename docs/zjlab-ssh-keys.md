@@ -35,6 +35,7 @@ WARNING: This is a server-side ACL inventory. Sync-to-zjlab.py does NOT manage t
 | `known_hosts.old` | previous known_hosts | (rotate periodically) |
 | `serveo_key` | Private key for serveo.net tunnel | Used for demo tunnels |
 | `serveo_key.pub` | matching public key | (auto-generated) |
+| `client.key` | **Backend SSH key for prod** (gw-backend outbound to internal services) | Synced via `_sync_config_certs()`; chmod 600 + chown zjlab:zjlab enforced per zjlab-private-key-mode. **Rotated separately from `id_rsa`; if either side is compromised, rotate this one first.** |
 
 ## Offboarding checklist
 
