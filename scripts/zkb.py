@@ -40,7 +40,7 @@ Per [[r678-classifier-boundary]]:
   - 文档 ✅, 脚本生成 ✅ → this file OK
   - 批量删除 ❌, 自动执行 ❌ → auto-deploy NOT done here; USER must invoke
 
-Per [[gw-platform-user-access]]: zjlab access via bastion 192.168.10.10:60022
+Per [[gw-platform-user-access]]: zjlab access via bastion (see memory for endpoint topology)
 """
 import argparse
 import io
@@ -71,25 +71,107 @@ except ImportError:
 
 
 # === Config: sync-to-zjlab.py source path (single source of truth for creds) ===
-DEFAULT_SYNC_SCRIPT = Path(r'D:\AliCPT\scripts\sync-to-zjlab.py')
+# R6.102 D4: None means "no Windows fallback available"; callers must either
+# set ZJLAB_* env vars OR pass sync_script_path explicitly. parse_creds()
+# raises actionable RuntimeError when all 3 are missing (instead of cryptic
+# FileNotFoundError on the Windows-only literal).
+DEFAULT_SYNC_SCRIPT = None
 
 
-def parse_creds(sync_script_path: Path = DEFAULT_SYNC_SCRIPT):
+# R6.101: env-var names for CI runners (no hardcoded D:\ path required).
+# All-or-nothing semantics: if ANY of the 9 vars is set, ALL must be set; else
+# RuntimeError. This prevents silent partial-config bugs (e.g. setting BASTION
+# HOST but forgetting BASTION PASSWORD, which would silently use file PASSWORD
+# on file-only hosts but produce auth-fail on env hosts).
+_ENV_BASTION_KEYS = ('ZJLAB_BASTION_HOST', 'ZJLAB_BASTION_PORT',
+                     'ZJLAB_BASTION_USER', 'ZJLAB_BASTION_PASSWORD')
+_ENV_SERVER_KEYS = ('ZJLAB_SERVER_HOST', 'ZJLAB_SERVER_PORT',
+                    'ZJLAB_SERVER_USER', 'ZJLAB_SERVER_PASSWORD')
+_ENV_ROOT_KEY = 'ZJLAB_REMOTE_ROOT'
+
+
+def _any_env_set():
+    """Return dict of all 9 env vars (None for unset OR empty string).
+
+    R6.101 review (SECURITY MEDIUM): empty string '' must be treated as unset,
+    otherwise ZJLAB_BASTION_HOST='' bypasses the all-or-nothing guardrail and
+    silently reaches the connect path with an empty hostname. zsmoke.yml catches
+    this with `set -u` + `-z`, but local Python callers don't get that check.
+    Returns None for both unset and empty string (treats them identically).
+    """
+    out = {}
+    for k in _ENV_BASTION_KEYS + _ENV_SERVER_KEYS + (_ENV_ROOT_KEY,):
+        v = os.environ.get(k)
+        out[k] = v if v else None  # None or '' -> None
+    return out
+
+
+def _parse_creds_from_file(sync_script_path: Path):
     """Parse BASTION + SERVER + REMOTE_ROOT from sync-to-zjlab.py source.
 
     No creds embedded in this file. Reads them at runtime.
     Returns (BASTION_tuple, SERVER_tuple, REMOTE_ROOT_str).
     """
-    src = sync_script_path.read_text(encoding='utf-8')
-    m_b = re.search(r"^BASTION\s*=\s*\('([^']+)',\s*(\d+),\s*'([^']+)',\s*'([^']+)'\)", src, re.M)
-    m_s = re.search(r"^SERVER\s*=\s*\('([^']+)',\s*(\d+),\s*'([^']+)',\s*'([^']+)'\)", src, re.M)
-    m_r = re.search(r"^REMOTE_ROOT\s*=\s*'([^']+)'", src, re.M)
+    fsrc = sync_script_path.read_text(encoding='utf-8')
+    m_b = re.search(r"^BASTION\s*=\s*\('([^']+)',\s*(\d+),\s*'([^']+)',\s*'([^']+)'\)", fsrc, re.M)
+    m_s = re.search(r"^SERVER\s*=\s*\('([^']+)',\s*(\d+),\s*'([^']+)',\s*'([^']+)'\)", fsrc, re.M)
+    m_r = re.search(r"^REMOTE_ROOT\s*=\s*'([^']+)'", fsrc, re.M)
     if not (m_b and m_s and m_r):
         raise RuntimeError(f'Failed to parse creds from {sync_script_path}')
     bastion = (m_b.group(1), int(m_b.group(2)), m_b.group(3), m_b.group(4))
     server = (m_s.group(1), int(m_s.group(2)), m_s.group(3), m_s.group(4))
     remote_root = m_r.group(1)
     return bastion, server, remote_root
+
+
+def parse_creds(sync_script_path=None):
+    """Parse BASTION + SERVER + REMOTE_ROOT from env vars (preferred) or sync-to-zjlab.py.
+
+    R6.101: env-var path takes precedence for CI runners; file path is fallback for
+    Windows dev workflow. All-or-nothing: if ANY of the 9 ZJLAB_* env vars is set,
+    ALL must be set (else RuntimeError). This avoids silent partial-config bugs.
+
+    The 9 ZJLAB_* env vars are:
+      - ZJLAB_BASTION_HOST, ZJLAB_BASTION_PORT, ZJLAB_BASTION_USER, ZJLAB_BASTION_PASSWORD
+      - ZJLAB_SERVER_HOST,  ZJLAB_SERVER_PORT,  ZJLAB_SERVER_USER,  ZJLAB_SERVER_PASSWORD
+      - ZJLAB_REMOTE_ROOT
+
+    R6.102 D5: enumeration added to docstring (previously module-level constants only).
+
+    Returns (BASTION_tuple, SERVER_tuple, REMOTE_ROOT_str).
+    """
+    env = _any_env_set()
+    set_keys = [k for k, v in env.items() if v is not None]
+
+    # No env vars: pure file parse (Windows dev workflow)
+    if not set_keys:
+        # R6.102 D4: fail fast with actionable message instead of cryptic FileNotFoundError
+        if sync_script_path is None:
+            raise RuntimeError(
+                'No ZJLAB_* env vars set AND no sync_script_path provided. '
+                'Either set ZJLAB_BASTION_HOST/PORT/USER/PASSWORD + ZJLAB_SERVER_* + ZJLAB_REMOTE_ROOT, '
+                'or pass sync_script_path=Path("D:/AliCPT/scripts/sync-to-zjlab.py") explicitly.'
+            )
+        return _parse_creds_from_file(sync_script_path)
+
+    # Some env vars set: require ALL 9 to be set
+    missing = [k for k in env if k not in set_keys]
+    if missing:
+        raise RuntimeError(
+            f'Partial ZJLAB_* env ({len(set_keys)}/9 set). '
+            f'Missing: {missing}. Set all 9 or none.'
+        )
+
+    # All 9 set: use env values, cast PORT to int
+    return (
+        (env['ZJLAB_BASTION_HOST'], int(env['ZJLAB_BASTION_PORT']),
+         env['ZJLAB_BASTION_USER'], env['ZJLAB_BASTION_PASSWORD']),
+        (env['ZJLAB_SERVER_HOST'], int(env['ZJLAB_SERVER_PORT']),
+         env['ZJLAB_SERVER_USER'], env['ZJLAB_SERVER_PASSWORD']),
+        env['ZJLAB_REMOTE_ROOT'],
+    )
+
+
 
 
 class Zkb:
@@ -158,7 +240,9 @@ class Zkb:
             try:
                 return json.loads(out), code
             except json.JSONDecodeError as e:
-                raise RuntimeError(f'JSON parse failed: {e}\n--- raw ---\n{out[:500]}\n--- stderr ---\n{err[:500]}')
+                # R6.102 S1: truncate to 80 chars (avoid leaking env vars from failed JSON parses)
+                _safe = lambda s: ((s[:80] + '...[truncated]') if s and len(s) > 80 else (s or '<empty>'))
+                raise RuntimeError(f'JSON parse failed: {e}\n--- raw (first 80) ---\n{_safe(out)}\n--- stderr (first 80) ---\n{_safe(err)}')
         return out, code
 
     def stream(self, cmd: str, timeout: int = 600, ascii_safe: bool = True) -> str:
@@ -321,7 +405,9 @@ class Zkb:
         """
         out, code = self.run(f'docker kill --signal=HUP {container}', timeout=15)
         if code != 0:
-            raise RuntimeError(f'nginx reload via docker kill HUP failed (exit {code}): {out}')
+            # R6.102 S3: truncate to 200 chars (avoid leaking nginx config rendering env vars)
+                _safe = (out[:200] + '...[truncated]') if out and len(out) > 200 else (out or '<empty>')
+                raise RuntimeError(f'nginx reload via docker kill HUP failed (exit {code}): {_safe}')
         return out.strip() or container
 
     def health(self) -> dict:
@@ -330,14 +416,29 @@ class Zkb:
         try:
             out['containers'] = self.docker_ps()
         except Exception as e:
-            out['containers_error'] = str(e)
+            # R6.102 S4: store generic tag only, not raw exception (paramiko leaks host:port:user)
+                _msg = str(e).lower()
+                if 'auth' in _msg or 'password' in _msg:
+                    out['containers_error'] = 'auth-failed'
+                elif 'timeout' in _msg:
+                    out['containers_error'] = 'timeout'
+                elif 'refused' in _msg or 'unreachable' in _msg or 'no route' in _msg:
+                    out['containers_error'] = 'connection-refused'
+                else:
+                    out['containers_error'] = 'unknown-error' 
         try:
             txt, _ = self.run('curl -sk --resolve "r692-smoketest.local:6002:127.0.0.1" '
                               '-w "\\nHTTP=%{http_code}\\n" '
                               'https://r692-smoketest.local:6002/r692-smoketest-status')
             out['smoketest'] = txt.strip()
         except Exception as e:
-            out['smoketest_error'] = str(e)
+            # R6.102 S5: sanitize curl error string (strip query, redact userinfo, redact IPv4)
+                import re as _re
+                _msg = str(e)
+                _msg = _re.sub(r'\?[^\?]*', '', _msg)  # strip query string
+                _msg = _re.sub(r'(://)([^:]+):([^@]+)@', r'\1\2:***@', _msg)  # redact userinfo
+                _msg = _re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '<ip>', _msg)
+                out['smoketest_error'] = _msg
         return out
 
 

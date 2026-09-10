@@ -1,0 +1,156 @@
+# zsmoke.yml - R6.101: gw-platform CI smoketest on zjlab
+#
+# R6.100 review (CRITICAL #2): original zsmoke.yml was un-runnable on Linux
+# runners because (a) no `pip install paramiko`, (b) zkb.py hardcoded a
+# Windows-only path for creds, (c) workflow_dispatch inputs declared but
+# never used, (d) `... | tail -N` swallowed python exit code.
+#
+# R6.101 fixes:
+#   1. `pip install paramiko` step (REQUIRED, was missing)
+#   2. zkb.py: env-var creds (ZJLAB_*) - no hardcoded path needed
+#   3. workflow_dispatch inputs ACTUALLY USED (mode, read_remote)
+#   4. `set -euo pipefail` + `${PIPESTATUS[0]}` for honest exit code
+#
+# REQUIRED SECRETS (Settings -> Secrets and variables -> Actions -> New secret):
+#   ZJLAB_BASTION_HOST, ZJLAB_BASTION_PORT, ZJLAB_BASTION_USER, ZJLAB_BASTION_PASSWORD
+#   ZJLAB_SERVER_HOST,  ZJLAB_SERVER_PORT,  ZJLAB_SERVER_USER,  ZJLAB_SERVER_PASSWORD
+#   ZJLAB_REMOTE_ROOT
+#
+# USAGE:
+#   Manual: Actions tab -> zsmoke CI smoketest -> Run workflow -> choose mode
+#   Scheduled: daily 06:00 UTC (14:00 Beijing) -> quick mode (essential 4 checks)
+#   Push: r6.52 branch push -> quick mode
+name: zsmoke CI smoketest
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full (all 8 checks) or quick (essential 4)'
+        required: true
+        default: 'quick'
+        type: choice
+        options: [quick, full]
+      read_remote:
+        description: 'Also check remote last-deploy.json (R6.99 #5)'
+        required: false
+        default: 'false'
+        type: boolean
+  schedule:
+    # Daily 06:00 UTC = 14:00 Beijing. Random minute (avoid 0/30 herd).
+    - cron: '23 6 * * *'
+  push:
+    branches: [r6.52]
+
+# R6.102 D2: split concurrency groups by event name.
+# Auto runs (scheduled + push) cancel each other (avoid stacked CI minutes).
+# Manual runs (workflow_dispatch) are isolated (don't cancel mid-debug).
+concurrency:
+  group: >-
+    zsmoke-${{
+      (github.event_name == 'workflow_dispatch'
+        && format('dispatch-{0}-{1}', github.event.inputs.mode, github.run_id))
+      || format('auto-{0}', github.ref)
+    }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    # R6.102 D1: use vars.EXPECTED_REPO (repo-config, not rename-locked).
+    # If repo is renamed, change the variable; this gate does not silently break.
+    # On fork: workflow_dispatch still allowed (verify step catches missing secrets).
+    if: github.repository == vars.EXPECTED_REPO || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # R6.101 FIX #1: paramiko was missing in original workflow.
+      # Without this, `from zkb import Zkb` -> ImportError at first run.
+      - name: Install paramiko
+        run: pip install paramiko
+
+      - name: Verify env vars (fail fast on partial)
+        run: |
+          set -euo pipefail
+          REQUIRED="ZJLAB_BASTION_HOST ZJLAB_BASTION_PORT ZJLAB_BASTION_USER ZJLAB_BASTION_PASSWORD \
+                   ZJLAB_SERVER_HOST ZJLAB_SERVER_PORT ZJLAB_SERVER_USER ZJLAB_SERVER_PASSWORD \
+                   ZJLAB_REMOTE_ROOT"
+          MISSING=""
+          for k in $REQUIRED; do
+            if [ -z "${!k:-}" ]; then MISSING="$MISSING $k"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: missing secrets:$MISSING"
+            echo "Set all 9 ZJLAB_* secrets in repo Settings -> Secrets -> Actions."
+            exit 1
+          fi
+          echo "All 9 ZJLAB_* secrets present"
+
+      - name: Run zsmoke
+        env:
+          ZJLAB_BASTION_HOST:     ${{ secrets.ZJLAB_BASTION_HOST }}
+          ZJLAB_BASTION_PORT:     ${{ secrets.ZJLAB_BASTION_PORT }}
+          ZJLAB_BASTION_USER:     ${{ secrets.ZJLAB_BASTION_USER }}
+          ZJLAB_BASTION_PASSWORD: ${{ secrets.ZJLAB_BASTION_PASSWORD }}
+          ZJLAB_SERVER_HOST:      ${{ secrets.ZJLAB_SERVER_HOST }}
+          ZJLAB_SERVER_PORT:      ${{ secrets.ZJLAB_SERVER_PORT }}
+          ZJLAB_SERVER_USER:      ${{ secrets.ZJLAB_SERVER_USER }}
+          ZJLAB_SERVER_PASSWORD:  ${{ secrets.ZJLAB_SERVER_PASSWORD }}
+          ZJLAB_REMOTE_ROOT:      ${{ secrets.ZJLAB_REMOTE_ROOT }}
+        run: |
+          set -euo pipefail
+          # R6.101 FIX #3: workflow_dispatch inputs actually used here.
+          MODE="${{ github.event.inputs.mode || 'quick' }}"
+          READ_REMOTE_INPUT="${{ github.event.inputs.read_remote || 'false' }}"
+
+          # scheduled + push use quick + no remote (smoke-only)
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "push" ]; then
+            MODE="quick"
+            READ_REMOTE_INPUT="false"
+          fi
+
+          ARGS=()
+          if [ "$MODE" = "full" ]; then
+            ARGS+=("--json")
+          else
+            ARGS+=("quick" "--json")
+          fi
+          if [ "$READ_REMOTE_INPUT" = "true" ]; then
+            ARGS+=("--read-remote")
+          fi
+
+          echo "Running: python scripts/zsmoke.py ${ARGS[*]}"
+          # R6.102 D3: write to smoke-output.json directly (no tee) so pipefail
+          # does not skip the ::error:: / ::warning:: annotations. Previous
+          # `... | tee smoke-output.json` form made set -e + pipefail exit
+          # the shell before annotation lines could run.
+          set +o pipefail  # disable pipefail for this command (not relevant; no pipe now)
+          python scripts/zsmoke.py "${ARGS[@]}" > smoke-output.json
+          EXIT=$?
+          echo "zsmoke exit: $EXIT"
+          if [ "$EXIT" = "1" ]; then
+            echo "::error::zsmoke reported FAIL(s) - see smoke-output.json"
+          elif [ "$EXIT" = "2" ]; then
+            echo "::warning::zsmoke reported WARN/partial pass"
+          fi
+          exit "$EXIT"
+
+      - name: Upload smoke output (always, even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zsmoke-output
+          path: smoke-output.json
+          if-no-files-found: ignore
+          # R6.102 S2: shorten retention 14d -> 3d; smoke-output.json may contain
+          # container env var dumps or pipeline stdout that includes REDIS_PASSWORD
+          # echoes. 3 days is enough for debug triage; not a long-term record.
+          retention-days: 3
