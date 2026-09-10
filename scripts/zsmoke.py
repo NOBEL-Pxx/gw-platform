@@ -24,6 +24,7 @@ CHECKS (each returns status PASS|FAIL|WARN|SKIP + duration_ms + message):
   6. nginx-config-test    (R6.92a): docker exec gw-frontend nginx -t -> "syntax is ok"
   7. disk-space           : df -h /home/zjlab -> WARN if >85% used
   8. last-deploy          (R6.99 #5): read remote last-deploy.json, verify commit_sha matches git HEAD (only with --read-remote)
+  9. api-health           (R6.80): GET http://divs-backend:8093/api/health -> verify status=UP + app/elasticsearch/mongo all UP
 
 EXIT CODES:
   0 = all PASS (or all PASS+WARN with --no-fail)
@@ -265,6 +266,50 @@ def check_last_deploy(z, **kwargs) -> tuple[str, int, str]:
         remote_sha[:7], local_sha[:7])
 
 
+def check_api_health(z, **kwargs) -> tuple[str, int, str]:
+    """R6.80: GET http://divs-backend:8093/api/health -> verify UP + all components.
+
+    The /api/health endpoint is the public-facing health probe (R6.103/R6.80).
+    Returns JSON like:
+      {"error":{"code":"0","msg":""},"data":{"status":"UP","version":"v4.61-...",
+        "timestamp":"...","components":{"app":{"status":"UP"},"elasticsearch":{...},"mongo":{...}}}}
+
+    Probe via docker exec to avoid the gateway canary path issues.
+    """
+    t0 = time.time()
+    cmd = (
+        "docker exec divs-backend sh -c 'wget -qO- http://localhost:8093/api/health'"
+    )
+    out, code = z.run(cmd, timeout=15)
+    duration_ms = int((time.time() - t0) * 1000)
+    if code != 0:
+        return FAIL, duration_ms, 'docker exec wget exit={}'.format(code)
+    body = (out or '').strip()
+    if not body:
+        return FAIL, duration_ms, 'empty body'
+    try:
+        envelope = json.loads(body)
+    except json.JSONDecodeError as e:
+        return FAIL, duration_ms, 'invalid JSON: {}'.format(e)
+    # Unwrap Response wrapper: {error, data}
+    if not isinstance(envelope, dict) or 'data' not in envelope:
+        return FAIL, duration_ms, 'no data envelope: {}'.format(body[:200])
+    data = envelope.get('data', {})
+    status = data.get('status', '?')
+    version = data.get('version', '?')
+    components = data.get('components', {})
+    required = ['app', 'elasticsearch', 'mongo']
+    missing = [c for c in required if c not in components]
+    if missing:
+        return FAIL, duration_ms, 'missing components: {}'.format(missing)
+    down = [c for c in required if components.get(c, {}).get('status') != 'UP']
+    if status != 'UP' or down:
+        return FAIL, duration_ms, 'status={} down={}'.format(status, down)
+    # All UP — report version + latency summary
+    total_latency = sum(components[c].get('latency_ms', 0) for c in required if 'latency_ms' in components.get(c, {}))
+    return PASS, duration_ms, 'UP v={} components_ms={}'.format(version, total_latency)
+
+
 # === Check registry ===
 CHECKS = {
     'r692-smoketest':   ('R6.92b smoketest endpoint on :6001',          check_r692_smoketest, False),
@@ -275,9 +320,11 @@ CHECKS = {
     'nginx-config':     ('R6.92a nginx -t syntax check',                check_nginx_config,   False),
     'disk-space':       ('disk usage on /home/zjlab',                   check_disk_space,     False),
     'last-deploy':      ('R6.99 #5 remote last-deploy.json vs git HEAD',check_last_deploy,    True),  # True = requires --read-remote
+    'api-health':       ('R6.80 /api/health from divs-backend',         check_api_health,     False),
 }
 
-QUICK_CHECKS = ['r692-smoketest', 'backend-health', 'gw-frontend', 'gw-backend']
+
+QUICK_CHECKS = ['r692-smoketest', 'backend-health', 'gw-frontend', 'gw-backend', 'api-health']
 
 
 def run_checks(names: list[str], read_remote: bool, json_mode: bool) -> tuple[list[dict], int]:

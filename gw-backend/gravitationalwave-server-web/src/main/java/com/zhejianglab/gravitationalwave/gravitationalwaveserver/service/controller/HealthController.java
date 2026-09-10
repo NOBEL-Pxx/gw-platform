@@ -4,6 +4,7 @@ import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.respons
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,23 +15,39 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * R6.103 /api/health — public-facing health check.
+ * R6.80: public-facing health check.
  *
- * Returns a user-visible subset of /actuator/health:
- *   - status: aggregated UP / DOWN
- *   - timestamp: ISO instant
- *   - components: { app, elasticsearch, mongo } each with status + latency_ms
+ * <p>Returns a user-visible subset of /actuator/health:
+ * <ul>
+ *   <li>status: aggregated UP / DOWN</li>
+ *   <li>version: app.version from version.properties (R6.80 addition)</li>
+ *   <li>timestamp: ISO instant</li>
+ *   <li>components: { app, elasticsearch, mongo } each with status + latency_ms</li>
+ * </ul>
  *
- * Excluded from RateLimitInterceptor + AuthInterceptor in WebMvcConfig
+ * <p>Excluded from RateLimitInterceptor + AuthInterceptor in WebMvcConfig
  * so it can be polled freely by external monitoring without consuming
  * the bucket4j quota or requiring JWT auth.
  *
- * Why this exists (R6.102 lesson):
- *   - /actuator/health already returns 200 UP but exposes internal details
- *     (diskSpace path, ES cluster internals, ssl chains). Some external
- *     monitors want a leaner public surface.
- *   - The bug "0 is wrong value for period tokens" was masking the absence
- *     of any /api/health controller. Now it's explicit.
+ * <p>Why this exists:
+ * <ul>
+ *   <li>/actuator/health already returns 200 UP but exposes internal details
+ *       (diskSpace path, ES cluster internals, ssl chains). Some external
+ *       monitors want a leaner public surface.</li>
+ *   <li>Earlier R6.102 bug "0 is wrong value for period tokens" was masking the absence
+ *       of any /api/health controller. Now it's explicit.</li>
+ * </ul>
+ *
+ * <p>R6.80 changes:
+ * <ul>
+ *   <li>Added {@code version} field at top level (read from {@code app.version} PropertySource;
+ *       defaults to {@code "unknown"} if version.properties is not on the Spring PropertySource chain).</li>
+ *   <li>Mongo probe now uses {@code estimatedDocumentCount()} (collection-level metadata query,
+ *       no admin privileges required, bounded latency) instead of {@code executeCommand("{ping:1}")}.</li>
+ *   <li>All probes wrapped in {@code checkComponent()} helper that catches exceptions per component
+ *       so one failing probe does not short-circuit the others.</li>
+ *   <li>Probe timeouts bounded by MongoConfig R6.80 socket/connect timeouts (5s/10s).</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/health")
@@ -43,6 +60,10 @@ public class HealthController {
 
     @Autowired(required = false)
     private co.elastic.clients.elasticsearch.ElasticsearchClient elasticsearchClient;
+
+    /** R6.80: read app.version from version.properties (set by R6.72 groovy-maven-plugin). */
+    @Value("${app.version:unknown}")
+    private String appVersion;
 
     @GetMapping
     public Response<Map<String, Object>> health() {
@@ -69,11 +90,14 @@ public class HealthController {
                 return false;
             }
             try {
-                // ping() throws if mongo is unreachable. ~1ms in practice.
-                mongoTemplate.executeCommand("{ ping: 1 }");
-                return true;
+                // R6.80: estimatedDocumentCount() on the database's main collection —
+                // collection-level metadata query, no admin privileges required, bounded
+                // latency by MongoConfig R6.80 socket/connect timeouts (5s/10s).
+                Long n = mongoTemplate.getCollection(mongoTemplate.getDb().getName())
+                        .estimatedDocumentCount();
+                return n != null;
             } catch (Exception ex) {
-                log.warn("mongo ping failed: {}", ex.getMessage());
+                log.warn("mongo probe failed: {}", ex.getMessage());
                 return false;
             }
         }));
@@ -83,6 +107,7 @@ public class HealthController {
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", allUp ? "UP" : "DOWN");
+        data.put("version", appVersion);
         data.put("timestamp", Instant.now().toString());
         data.put("components", components);
 
