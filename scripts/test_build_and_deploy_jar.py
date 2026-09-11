@@ -422,7 +422,7 @@ class TestTripleShaVerification(unittest.TestCase):
                 return ('', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):
                 if health_up:
                     return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
                 return ('{"code":1,"message":"down"}', 1)
@@ -578,7 +578,7 @@ class TestDeployBackup(unittest.TestCase):
                 return ('', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):  # R6.86-A: post-deploy probes use wget (busybox)
                 return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
             return ('', 0)
 
@@ -719,7 +719,7 @@ class TestCmdRollbackHappyPath(unittest.TestCase):
                 return ('', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):  # R6.86-A: post-deploy probes use wget (busybox)
                 return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
             return ('', 0)
 
@@ -919,7 +919,7 @@ class TestDeployBackupReviewFixes(unittest.TestCase):
                 return ('', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):  # R6.86-A: post-deploy probes use wget (busybox)
                 return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
             return ('', 0)
 
@@ -1049,7 +1049,7 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
                 return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):  # R6.86-A: post-deploy probes use wget (busybox)
                 return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
             return ('', 0)
 
@@ -1111,7 +1111,7 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
                 return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar', 0)
             if 'docker restart' in cmd:
                 return ('divs-backend\n', 0)
-            if 'docker exec' in cmd and 'curl' in cmd:
+            if 'docker exec' in cmd and ('curl' in cmd or 'wget' in cmd):  # R6.86-A: post-deploy probes use wget (busybox)
                 return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
             return ('', 0)
 
@@ -1170,7 +1170,7 @@ class TestV1MarkerCheck(unittest.TestCase):
         # and binds `container` to it, leading to "missing 'marker' argument".
         import importlib.util as _ilu
         from types import MethodType
-        _spec = _ilu.spec_from_file_location('_zkb_for_test', r'C:\Users\28610\r684_staging\scripts\zkb.py')
+        _spec = _ilu.spec_from_file_location('_zkb_for_test', r'D:\AliCPT\scripts\zkb.py')
         _zkb = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_zkb)
         self._check_marker_log = MethodType(_zkb.Zkb.check_marker_log, mock.MagicMock())
@@ -1293,24 +1293,46 @@ class TestV1MarkerCheck(unittest.TestCase):
 
 
 class TestCheckMarkerLogRefactor(unittest.TestCase):
-    """R6.84b: build-and-deploy-jar.py V1 marker path uses Zkb.check_marker_log().
+    """R6.84b + R6.85b: build-and-deploy-jar.py V1 marker path uses Zkb.check_marker_log().
 
-    Pins the R6.83 -> R6.84b refactor: cmd_deploy must call z.check_marker_log()
-    rather than the inlined `docker logs ... | grep -F ...` pipeline. Regression
-    guard against accidental revert to the inline pattern.
+    Pins the R6.83 -> R6.84b refactor (single marker) AND the R6.85b extension
+    (multi-marker AND-check for HealthController + LlmController + PipelineProxyController).
+    cmd_deploy must call z.check_marker_log() rather than the inlined
+    `docker logs ... | grep -F ...` pipeline. Regression guard against accidental
+    revert to the inline pattern, AND against silent removal of the R6.85b markers
+    (which would re-introduce the R6.80 bug where stale upstream bytecode passed
+    /api/health UP but lacked the new lifecycle hooks).
     """
 
-    def test_cmd_deploy_calls_check_marker_log(self):
-        """Refactored cmd_deploy invokes z.check_marker_log with the R6.83 marker."""
-        # Read the cmd_deploy source to confirm refactor is in place.
+    def test_cmd_deploy_calls_check_marker_log_with_all_markers(self):
+        """Refactored cmd_deploy invokes z.check_marker_log with the 3-marker AND-check.
+
+        R6.85b added 2 more markers (LlmController + PipelineProxyController RestTemplate
+        init). The check must now be a list of 3 markers passed to check_marker_log so
+        that an mvn build without -am (R6.80 lesson) fails the AND-check rather than
+        silently shipping stale bytecode.
+        """
         source = Path(SCRIPT_PATH).read_text(encoding='utf-8')
-        # The refactored line uses z.check_marker_log(REMOTE_CONTAINER, 'R6.83: ...')
+        # The refactored lines use z.check_marker_log(REMOTE_CONTAINER, v1_markers)
+        # where v1_markers is a 3-element list of R6.83 + R6.85b markers.
         self.assertIn(
-            'z.check_marker_log(\n                        REMOTE_CONTAINER,\n'
-            "                        'R6.83: HealthController probe executor initialized',\n",
+            'markers_found, markers_snippet = z.check_marker_log(\n'
+            '                        REMOTE_CONTAINER,\n'
+            '                        v1_markers,\n'
+            '                    )',
             source,
-            msg='cmd_deploy should call z.check_marker_log() — refactor missing',
+            msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers) — refactor missing',
         )
+        # All 3 markers must be present in v1_markers list
+        for marker in (
+            'R6.83: HealthController probe executor initialized',
+            'R6.85b: LlmController RestTemplate initialized',
+            'R6.85b: PipelineProxyController RestTemplate initialized',
+        ):
+            self.assertIn(
+                marker, source,
+                msg=f'cmd_deploy must check marker {marker!r} — R6.85b AND-check incomplete',
+            )
 
 
 class TestR686CurlProbeFix(unittest.TestCase):
