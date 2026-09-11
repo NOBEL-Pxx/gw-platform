@@ -649,11 +649,13 @@ def cmd_deploy(args):
                     if markers_found:
                         print(f'  [V1] All {len(v1_markers)} markers found in container logs (R6.83 + R6.85b deploy confirmed)')
                     else:
-                        # At least one marker missing — figure out which
-                        missing = []
-                        for marker in v1_markers:
-                            if f'FOUND:{marker}' not in markers_snippet:
-                                missing.append(marker)
+                        # R6.89 F1: compute missing directly from v1_markers against the
+                        # actual log snippet (markers_snippet is raw docker logs, NOT
+                        # 'FOUND:<marker>' prefixed). Pre-R6.89 the check `f'FOUND:{marker}'
+                        # not in markers_snippet` always evaluated True (the 'FOUND:' prefix
+                        # never appears in raw logs), so the Missing list was always empty
+                        # even when markers were missing.
+                        missing = [m for m in v1_markers if m not in markers_snippet]
                         print(f'  [WARN V1] {len(missing)}/{len(v1_markers)} marker(s) NOT found in container logs.')
                         print(f'           Missing: {missing}')
                         print('           If you are deploying R6.83+R6.85b and any marker is missing,')

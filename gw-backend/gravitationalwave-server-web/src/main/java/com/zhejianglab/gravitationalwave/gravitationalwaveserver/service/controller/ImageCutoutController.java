@@ -104,7 +104,13 @@ public class ImageCutoutController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("Invalid datatype: '" + safeDatatype + "'. Supported values: PNG, FITS.");
         } catch (IOException e) {
-            return ResponseEntity.status(500).body("Failed to download image: " + e.getMessage());
+            // R6.89 W3: do NOT echo e.getMessage() to the caller — it can leak internal file
+            // paths (e.g., /tmp/cutout-2026-09-12-XYZ.tmp), Mongo ObjectIds, or other host-
+            // specific details. Log the full exception server-side; return a generic message.
+            log.error("downloadImage failed (datatype={}, output={}): {}",
+                    datatype, output, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to download image. Please retry; if it persists, contact support.");
         }
     }
 }

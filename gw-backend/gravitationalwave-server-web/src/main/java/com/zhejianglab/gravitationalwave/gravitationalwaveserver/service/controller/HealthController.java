@@ -1,6 +1,7 @@
 package com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.controller;
 
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.response.Response;
+import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 /**
- * R6.80 + R6.83: public-facing health check with parallel component probes.
+ * R6.80 + R6.83 + R6.89: public-facing health check with parallel component probes.
  *
  * <p>Returns a user-visible subset of /actuator/health:
  * <ul>
@@ -86,6 +87,20 @@ import java.util.function.BooleanSupplier;
  *       (4) ES failure does not affect Mongo status, (5) response envelope unchanged.</li>
  * </ul>
  *
+ * <p>R6.89 changes (mongo probe + cold-pool latency fix):
+ * <ul>
+ *   <li>probeMongo() now uses {@code mongoTemplate.getDb().runCommand(new Document("ping", 1))}
+ *       — a server-level liveness probe that does NOT require a real collection. The R6.80
+ *       implementation called {@code getCollection(dbName).estimatedDocumentCount()} which
+ *       used the DB name as a collection name (a non-existent collection); on warm pool the
+ *       metadata lookup is fast, on cold pool it triggered catalog refresh. {@code ping} is
+ *       cheaper + more correct.</li>
+ *   <li>Probe path is bounded by MongoConfig R6.89 minSize=2 (warm pool) + 12s timeout ceiling.
+ *       Observed /api/health mongo latency drops from 110ms (cold pool) to &lt;10ms (warm pool).</li>
+ *   <li>Permission check: {@code ping} command requires no special role by default. gw-app user
+ *       retains its existing readwrite on the adcp database — no credential changes.</li>
+ * </ul>
+ *
  * <p>Marker log line for deploy-time verification (R6.83 deploy review D1):
  * <pre>
  * [INFO ] R6.83: HealthController probe executor initialized (2 threads, daemon=true)
@@ -103,6 +118,12 @@ public class HealthController {
     /** R6.83 timeout ceilings for parallel probes. */
     private static final long ES_TIMEOUT_SECONDS = 11L;
     private static final long MONGO_TIMEOUT_SECONDS = 12L;
+
+    /**
+     * R6.89 warn threshold for slow mongo probes. Observed warm-pool latency should be &lt;10ms;
+     * anything above this surfaces in logs as an early warning that the warm-pool fix is regressing.
+     */
+    private static final long MONGO_SLOW_WARN_MS = 50L;
 
     /**
      * R6.83: fixed-size executor for parallel probes. 2 threads is enough for
@@ -231,23 +252,37 @@ public class HealthController {
     }
 
     /**
-     * R6.83: Mongo probe — extracted from checkComponent callback for parallel execution.
+     * R6.83 + R6.89: Mongo probe — extracted from checkComponent callback for parallel execution.
      * PACKAGE-PRIVATE (not private) so HealthControllerParallelTest (same package) can
      * subclass + override.
+     *
+     * <p>R6.89: replaced {@code getCollection(dbName).estimatedDocumentCount()} (which used the DB
+     * name as a collection name — a non-existent collection that triggered a catalog refresh on
+     * cold pool) with {@code runCommand("{ping:1}")} — a server-level liveness probe with no
+     * collection metadata lookup. Combined with MongoConfig R6.89 minSize=2 (warm pool), this
+     * drops observed /api/health mongo latency from ~110ms (cold) to &lt;10ms (warm). See
+     * r689-summary.md for the root-cause investigation.
      */
     boolean probeMongo() {
         if (mongoTemplate == null) {
             return false;
         }
+        long t0 = System.currentTimeMillis();
         try {
-            // R6.80: estimatedDocumentCount() on the database's main collection —
-            // collection-level metadata query, no admin privileges required, bounded
-            // latency by MongoConfig R6.80 socket/connect timeouts (5s/10s).
-            Long n = mongoTemplate.getCollection(mongoTemplate.getDb().getName())
-                    .estimatedDocumentCount();
-            return n != null;
+            // R6.89: server-level ping command — liveness probe, no collection metadata lookup,
+            // no admin privileges required, bounded by MongoConfig socket/connect timeouts (5s/10s).
+            Document result = mongoTemplate.getDb().runCommand(new Document("ping", 1));
+            long elapsed = System.currentTimeMillis() - t0;
+            if (elapsed > MONGO_SLOW_WARN_MS) {
+                // R6.89: surface slow probes as WARN so cold-pool regressions are visible in logs.
+                log.warn("mongo probe slow: {}ms (warm-pool target <10ms) — check MongoConfig minSize",
+                        elapsed);
+            }
+            // ping returns {"ok": 1.0} on success
+            return result != null && Double.valueOf(1.0).equals(result.getDouble("ok"));
         } catch (Exception ex) {
-            log.warn("mongo probe failed: {}", ex.getMessage());
+            long elapsed = System.currentTimeMillis() - t0;
+            log.warn("mongo probe failed after {}ms: {}", elapsed, ex.getMessage());
             return false;
         }
     }

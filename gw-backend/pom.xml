@@ -203,6 +203,12 @@
                 <artifactId>bucket4j-core</artifactId>
                 <version>8.10.1</version>
             </dependency>
+            <!-- R6.89: bucket4j-redis for RedisRateLimiter (distributed multi-instance) -->
+            <dependency>
+                <groupId>com.bucket4j</groupId>
+                <artifactId>bucket4j-redis</artifactId>
+                <version>8.10.1</version>
+            </dependency>
 
             <!-- JJWT 0.12.6 — modern JWT library (no JAXB dependency) -->
             <dependency>

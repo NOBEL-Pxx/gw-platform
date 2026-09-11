@@ -98,6 +98,20 @@
             <artifactId>bucket4j-core</artifactId>
         </dependency>
 
+        <!-- R6.89: bucket4j-redis for distributed rate limiting (RedisRateLimiter under @Profile("redis")) -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j-redis</artifactId>
+        </dependency>
+        <!-- R6.89: lettuce-core is declared as `provided` by bucket4j-redis so it must be added
+             explicitly. 6.1.8.RELEASE matches the version range bucket4j-redis 8.10.1 was built
+             against; Spring Boot 3.4.1 manages lettuce-core via spring-boot-dependencies BOM,
+             so version is omitted here to inherit the managed version. -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- Jakarta Servlet API (provided by container at runtime, needed for HandlerInterceptor) -->
         <dependency>
             <groupId>jakarta.servlet</groupId>

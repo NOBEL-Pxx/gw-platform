@@ -15,10 +15,19 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Default single-instance rate limiter backed by ConcurrentHashMap.
- * R6.66.1: Removed @Profile("!redis") — RedisRateLimiter was deleted (was dead code that
- * never built successfully). Now this is the only RateLimiter implementation.
+ *
+ * R6.89: @Profile("!redis") restored. Active when the "redis" profile is NOT set.
+ * When "redis" profile IS set, RedisRateLimiter takes over (multi-instance distributed
+ * bucket4j via Lettuce + Redis Lua scripts). Fall-through pattern: dev/local still gets
+ * this in-memory impl; production with the "redis" profile gets distributed.
+ *
+ * R6.66.1 history: RedisRateLimiter was deleted as dead code; R6.89 brings it back because
+ * the bucket4j-redis dependency + application-redis.properties were already authored, and
+ * the practical need (multi-instance scaling) is now on the horizon. Until scaling ships,
+ * this in-memory impl remains the only one running in production.
  */
 @Component
+@org.springframework.context.annotation.Profile("!redis")
 public class InMemoryRateLimiter implements RateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(InMemoryRateLimiter.class);

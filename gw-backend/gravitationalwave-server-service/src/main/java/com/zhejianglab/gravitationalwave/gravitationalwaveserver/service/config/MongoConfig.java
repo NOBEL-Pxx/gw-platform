@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>serverSelectionTimeoutMS = 30000 (30s) — too slow for /api/health probes</li>
  *   <li>socketTimeoutMS = 0 (infinite) — long-running queries hang forever</li>
  *   <li>retryWrites = true (default since driver 3.9) — built-in transient retry</li>
+ *   <li>minPoolSize = 0 — cold pool; first probe after idle pays TCP+SCRAM handshake cost</li>
  * </ul>
  *
  * <p>R6.80 tightens these for fast failure + explicit retry budget:
@@ -28,6 +29,12 @@ import java.util.concurrent.TimeUnit;
  *   <li>maxConnectionIdleTime = 60000 (1m) — recycle idle conns (avoid stale conn issues)</li>
  *   <li>maxConnectionLifeTime = 600000 (10m) — force periodic reconnection</li>
  * </ul>
+ *
+ * <p>R6.89: warm the connection pool to fix /api/health mongo latency regression (110ms cold-pool
+ * observation, root cause = minPoolSize=0 default + maxConnectionIdleTime=60s setting closing
+ * connections before next probe). Adding minSize=2 keeps 2 connections warm indefinitely, eliminating
+ * the TCP+SCRAM handshake cost on the first probe after an idle period. maxSize=50 is a defensive
+ * cap (driver default 100 was ample but bound was implicit). See r689-summary.md for the diff.
  *
  * <p>Why MongoClientSettingsBuilderCustomizer (not application.properties URI):
  * <ul>
@@ -57,6 +64,13 @@ public class MongoConfig {
                 .applyToClusterSettings(b -> b
                         .serverSelectionTimeout((long) 5, TimeUnit.SECONDS))
                 .applyToConnectionPoolSettings(b -> b
+                        // R6.89: keep 2 connections warm. The driver default is min=0/max=100,
+                        // which means the first /api/health probe after 60s idle pays TCP+SCRAM
+                        // handshake cost (typical 50-150ms on local Docker network).
+                        // .minSize(2) + .maxSize(50) bounds the pool while eliminating cold-pool
+                        // latency. Driver 5.x API: minSize(int) / maxSize(int) — single int arg.
+                        .minSize(2)
+                        .maxSize(50)
                         .maxConnectionIdleTime((long) 60, TimeUnit.SECONDS)
                         .maxConnectionLifeTime((long) 600, TimeUnit.SECONDS))
                 .retryWrites(true)

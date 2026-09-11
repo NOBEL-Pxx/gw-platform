@@ -58,7 +58,11 @@ public class StaticFileController {
         private String relativePath;
     }
 
-    @CrossOrigin(origins = "*")
+    // R6.89 audit: restrict CORS to specific origins (was "*", allowing any browser to fetch).
+    // Static files are public-no-auth but bandwidth-abuse / fingerprinting is a LOW-MED risk.
+    // Public frontend: https://alicpt.lhr.life (per OpenApiConfig.java:23). Dev: localhost:8091
+    // (per docker-compose.yml gw-frontend port mapping).
+    @CrossOrigin(origins = {"https://alicpt.lhr.life", "http://localhost:8091"})
     @GetMapping("/fits/**")
     public ResponseEntity<InputStreamResource> downloadFits(HttpServletRequest request) throws IOException {
         String requestUri = request.getRequestURI();
@@ -75,7 +79,7 @@ public class StaticFileController {
         return downloadFile(new FileRequest(BASE_DIRECTORY, fullRelativePath));
     }
 
-    @CrossOrigin(origins = "*")
+    @CrossOrigin(origins = {"https://alicpt.lhr.life", "http://localhost:8091"})
     @GetMapping("/image/**")
     public ResponseEntity<InputStreamResource> downloadImage(HttpServletRequest request) throws IOException {
         String requestUri = request.getRequestURI();

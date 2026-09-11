@@ -8,6 +8,9 @@ import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.validat
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -101,14 +104,18 @@ public class SearchController {
      * v4.12: Enables offline analysis, spreadsheet import, and data sharing.
      */
     @GetMapping(value = "/export/csv", produces = "text/csv;charset=UTF-8")
-    public String exportCsv(@RequestParam(required = false) Double ra,
+    public ResponseEntity<String> exportCsv(@RequestParam(required = false) Double ra,
                             @RequestParam(required = false) Double dec,
                             @RequestParam(required = false, defaultValue = "1") Double radius,
                             @RequestParam(required = false, defaultValue = "") String telescope) throws IOException {
-        // R6.85-A-NULLGUARD: same defense as geoSearch — surface a clear error rather than NPE.
+        // R6.89 W2: return ResponseEntity<String so the 503 path can set content-type to
+        // text/plain (was text/csv;charset=UTF-8 for a plain English error — misleading to
+        // CSV consumers like spreadsheet importers). The success path still returns text/csv.
         if (searchService == null) {
             log.error("SearchService not initialized — please retry in a moment");
-            return "Search service not initialized — please retry in a moment";
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .body("Search service not initialized — please retry in a moment");
         }
 
         QueryGeoSearchRequest request = new QueryGeoSearchRequest();
@@ -126,8 +133,9 @@ public class SearchController {
         SearchService.PageResult<com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.GrawaveDataDO> pageResult =
             (SearchService.PageResult<com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.GrawaveDataDO>) result.getData();
         java.util.List<com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.GrawaveDataDO> list = pageResult.getList();
-        if (list.isEmpty()) return "No data found";
-
+        // R6.89 W2: empty result is also a success path (200 OK) but should NOT lie about its
+        // content-type — return CSV with just the header row so spreadsheet importers see a
+        // valid (empty) CSV, not a plain text "No data found" body with text/csv headers.
         StringBuilder sb = new StringBuilder();
         sb.append("id,band,ra,dec,start_date,end_date,telescope,img_path,fits_path\r\n");
         for (com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.GrawaveDataDO row : list) {
@@ -141,7 +149,9 @@ public class SearchController {
             sb.append(escapeCsv(row.getImg_path())).append(",");
             sb.append(escapeCsv(row.getFits_path())).append("\r\n");
         }
-        return sb.toString();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                .body(sb.toString());
     }
 
     private String escapeCsv(Object val) {

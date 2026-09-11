@@ -446,15 +446,22 @@ def check_api_health_rate_limit(z, **kwargs) -> tuple[str, int, str]:
         'echo 200; '
         'else '
         'echo 429; '
-        'fi >> /tmp/rl_results_${{j}}.txt; '
+        'fi >> "${{RLDIR}}/rl_results_${{j}}.txt"; '
         'done'
     ).format(reqs_per_job=reqs_per_job)
+    # R6.89 mktemp hardening: per-run private tmp dir prevents symlink-attack / glob-forge
+    # on shared /tmp. The pre-R6.89 `rm -f /tmp/rl_results_*.txt` + `cat /tmp/rl_results_*.txt`
+    # was forgeable by an attacker pre-creating a symlink at /tmp/rl_results_1.txt pointing to
+    # e.g. /etc/passwd. Zjlab trusted-host posture makes this VERY LOW risk but defense-in-depth.
+    # busybox mktemp is portable across the gw-* containers (centos + alpine hosts).
     full_cmd = (
-        'rm -f /tmp/rl_results_*.txt; '
+        'export RLDIR=$(mktemp -d /tmp/rl_results.XXXXXX); '
+        'chmod 700 "$RLDIR"; '
         'for j in $(seq 1 {bg_jobs}); do '
         '( {inner_loop} ) & '
         'done; wait; '
-        'cat /tmp/rl_results_*.txt 2>/dev/null | sort | uniq -c'
+        'cat "$RLDIR"/rl_results_*.txt 2>/dev/null | sort | uniq -c; '
+        'rm -rf "$RLDIR"'
     ).format(bg_jobs=bg_jobs, inner_loop=inner_loop)
 
     out, code = z.run(full_cmd, timeout=60)
