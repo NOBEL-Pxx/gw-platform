@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 
 /**
  * R6.66.2: Pipeline Proxy Controller.
@@ -73,13 +74,33 @@ public class PipelineProxyController {
 
     public PipelineProxyController() {
         this.restTemplate = new RestTemplate();
-        // Configure timeouts (default RestTemplate uses SimpleClientHttpRequestFactory)
+        // R6.85b: timeout config moved to initRestTemplate() @PostConstruct for consistency
+        // with R6.83 HealthController pattern. This constructor stays minimal.
+    }
+
+    /**
+     * R6.85b: configure RestTemplate timeouts (R6.83-C iron rule).
+     * gw-pipeline is local Docker DNS — 30s is generous; production could trim to 10s.
+     */
+    @PostConstruct
+    void initRestTemplate() {
         ((org.springframework.http.client.SimpleClientHttpRequestFactory)
             this.restTemplate.getRequestFactory())
             .setConnectTimeout(TIMEOUT_MS);
         ((org.springframework.http.client.SimpleClientHttpRequestFactory)
             this.restTemplate.getRequestFactory())
             .setReadTimeout(TIMEOUT_MS);
+        log.info("R6.85b: PipelineProxyController RestTemplate initialized (connect=30s, read=30s)");
+    }
+
+    /**
+     * R6.85b: R6.83-A iron rule — clean up RestTemplate on bean destruction.
+     */
+    @PreDestroy
+    void shutdownRestTemplate() {
+        // SimpleClientHttpRequestFactory uses HttpURLConnection per request (auto-closed).
+        // Emit audit log so post-deploy V1 marker check can confirm R6.85b bytecode is live.
+        log.info("R6.85b: PipelineProxyController shutdown complete");
     }
 
     /**
@@ -149,6 +170,14 @@ public class PipelineProxyController {
     }
 
     private ResponseEntity<byte[]> forward(HttpMethod method, HttpServletRequest req) throws IOException {
+        // R6.85b R6.83-D iron rule: null-guard against @PostConstruct failure.
+        if (restTemplate == null) {
+            log.error("[proxy] {} {} -> restTemplate not initialized (503)", method, req.getRequestURI());
+            byte[] errBody = "{\"error\":\"proxy not initialized\"}".getBytes(StandardCharsets.UTF_8);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Content-Type", "application/json")
+                .body(errBody);
+        }
         // R6.73 #2: IP whitelist check BEFORE any expensive work.
         // Get remote host (honors X-Forwarded-For if configured by servlet container,
         // otherwise raw socket address). gw-frontend nginx proxies to us via

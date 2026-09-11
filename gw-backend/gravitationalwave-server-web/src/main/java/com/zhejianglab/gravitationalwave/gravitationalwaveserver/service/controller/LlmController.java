@@ -5,8 +5,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -29,6 +31,7 @@ import java.time.Instant;
 public class LlmController {
 
     private static final Logger auditLog = LoggerFactory.getLogger("llm-audit");
+    private static final Logger log = LoggerFactory.getLogger(LlmController.class);  // R6.85b: lifecycle log (separate from audit)
 
     @Value("${deepseek.api.key:}")
     private String apiKey;
@@ -72,12 +75,34 @@ public class LlmController {
 
     @PostConstruct
     public void init() {
+        // R6.85b: configure RestTemplate timeouts (R6.83-C iron rule).
+        // DeepSeek can take 5-10s on slow model loads; 30s read window is safe.
+        SimpleClientHttpRequestFactory factory =
+            (SimpleClientHttpRequestFactory) restTemplate.getRequestFactory();
+        factory.setConnectTimeout(10_000);  // 10s connect
+        factory.setReadTimeout(30_000);     // 30s read (LLM latency)
+        log.info("R6.85b: LlmController RestTemplate initialized (connect=10s, read=30s)");
+
         if (apiKey == null || apiKey.isEmpty()) {
             System.err.println("[LlmController] WARNING: deepseek.api.key is not configured!");
         } else {
             System.out.println("[LlmController] DeepSeek API configured. Model: " + model
                 + ", daily-quota: " + dailyQuota + ", cache-ttl: " + cacheTtlMinutes + "min");
         }
+    }
+
+    /**
+     * R6.85b: clean up RestTemplate on bean destruction.
+     * R6.83-A iron rule: @PreDestroy mirrors @PostConstruct lifecycle.
+     * SimpleClientHttpRequestFactory uses HttpURLConnection per request (auto-closed),
+     * but we emit an audit log line so post-deploy verification (V1 marker check) can
+     * confirm R6.85b bytecode is live.
+     * Future R6.x: switch to HttpComponentsClientHttpRequestFactory which has
+     * a real close() method and proper connection pool cleanup.
+     */
+    @PreDestroy
+    public void shutdown() {
+        log.info("R6.85b: LlmController shutdown complete");
     }
 
     /** Compute a SHA-256 fingerprint of the messages array for cache lookup. */
@@ -108,6 +133,10 @@ public class LlmController {
 
     @PostMapping("/chat")
     public Response<Map<String, Object>> chat(@RequestBody Map<String, Object> request) {
+        // R6.85b R6.83-D iron rule: null-guard against @PostConstruct failure (returns 503 not NPE).
+        if (restTemplate == null) {
+            return Response.wrapError("0503", "LLM service not initialized — please retry in a moment");
+        }
         rollDaily();
 
         if (apiKey == null || apiKey.isEmpty()) {

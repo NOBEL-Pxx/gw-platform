@@ -3,11 +3,14 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.PropertySource;
 import org.springframework.data.elasticsearch.repository.config.EnableElasticsearchRepositories;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 
 
 @SpringBootApplication(exclude={DataSourceAutoConfiguration.class})
+@PropertySource("classpath:version.properties")  // R6.85a: expose app.version from version.properties
+                                                //         so /api/health no longer reports version="unknown"
 @ComponentScan(basePackages = {"com.zhejianglab.gravitationalwave.gravitationalwaveserver.service", "com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.controller"})
 @EnableMongoRepositories(basePackages = {
     "com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.comment.repository",

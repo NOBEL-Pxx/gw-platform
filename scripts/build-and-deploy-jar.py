@@ -16,8 +16,8 @@ Why this exists:
 
   This script LOCKS IN `-am` as the only supported build command. There is no opt-out.
   It also unifies:
-    - R6.97 #2 actuator jar rebuild (rebuild-actuator-and-deploy.py) [DEPRECATED R6.81a]
-    - R6.103 rebuild-divs-backend-with-actuator.py                       [DEPRECATED R6.81a]
+    - R6.97 #2 actuator jar rebuild [DEPRECATED R6.81a, stub RECYCLED 2026-09-11 via send2trash]
+    - R6.103 rebuild-divs-backend-with-actuator [DEPRECATED R6.81a, stub RECYCLED 2026-09-11 via send2trash]
     - R6.80 jar deploy path (docker cp to divs-backend)
 
 USAGE:
@@ -612,31 +612,41 @@ def cmd_deploy(args):
                 if '"status":"UP"' in out:
                     print(f'  [OK] /api/health = UP after {elapsed:.1f}s')
                     print(f'    body: {out.strip()[:300]}')
-                    # R6.83 V1 (generalized R6.84b): marker log check via Zkb.check_marker_log().
-                    # HealthController.class API surface is identical pre/post R6.83 (same class
-                    # path, same method signatures). Without this check, a `mvn -pl start package`
-                    # without `-am` would silently ship stale bytecode and pass /api/health UP.
-                    # Marker line emitted by HealthController.initProbeExecutor() @PostConstruct:
-                    #   "R6.83: HealthController probe executor initialized (2 threads, daemon=true)"
-                    # Future R6.x markers (e.g. R6.85b for LlmController/PipelineProxyController)
-                    # can be added to the list passed to check_marker_log() — see R6.84b plan.
-                    marker_found, marker_snippet = z.check_marker_log(
-                        REMOTE_CONTAINER,
+                    # R6.83 V1 + R6.85b markers via Zkb.check_marker_log() (generalized R6.84b).
+                    # 3-marker AND-check: HealthController (R6.83) + LlmController (R6.85b) + PipelineProxyController (R6.85b).
+                    # Without this AND-check, a `mvn -pl start package` without `-am` would silently ship
+                    # stale LlmController/PipelineProxyController bytecode and pass /api/health UP.
+                    # KEY_CLASSES whitelist cannot distinguish R6.80 vs R6.85 bytecode because both
+                    # LlmController.class + PipelineProxyController.class existed before.
+                    # Marker lines emitted by @PostConstruct methods:
+                    #   R6.83:  "R6.83: HealthController probe executor initialized (2 threads, daemon=true)"
+                    #   R6.85b: "R6.85b: LlmController RestTemplate initialized (connect=10s, read=30s)"
+                    #   R6.85b: "R6.85b: PipelineProxyController RestTemplate initialized (connect=30s, read=30s)"
+                    v1_markers = [
                         'R6.83: HealthController probe executor initialized',
+                        'R6.85b: LlmController RestTemplate initialized',
+                        'R6.85b: PipelineProxyController RestTemplate initialized',
+                    ]
+                    markers_found, markers_snippet = z.check_marker_log(
+                        REMOTE_CONTAINER,
+                        v1_markers,
                     )
-                    if marker_found:
-                        print('  [V1] R6.83 marker found in container logs (parallel executor confirmed deployed)')
+                    if markers_found:
+                        print(f'  [V1] All {len(v1_markers)} markers found in container logs (R6.83 + R6.85b deploy confirmed)')
                     else:
-                        # R6.83 marker absent — fallback: warn but don't abort (R6.83 is opt-in marker).
-                        # If you are DEPLOYING R6.83 and the marker is missing, this means the jar
-                        # has stale bytecode. Aborting would block legitimate R6.80 deploys that
-                        # don't ship the marker; warn keeps the deploy pipeline usable for both.
-                        print('  [WARN V1] R6.83 marker NOT found in container logs.')
-                        print('           If you are deploying R6.83 parallel probes, the jar has')
-                        print('           stale bytecode. Check: did mvn run with -am flag?')
-                        print('           Pre-R6.83 jars (no marker) are valid; post-R6.83 jars MUST emit this line.')
-                        if marker_snippet:
-                            print(f'           Recent log grep output: {marker_snippet[:200]}')
+                        # At least one marker missing — figure out which
+                        missing = []
+                        for marker in v1_markers:
+                            if f'FOUND:{marker}' not in markers_snippet:
+                                missing.append(marker)
+                        print(f'  [WARN V1] {len(missing)}/{len(v1_markers)} marker(s) NOT found in container logs.')
+                        print(f'           Missing: {missing}')
+                        print('           If you are deploying R6.83+R6.85b and any marker is missing,')
+                        print('           the jar has stale bytecode. Check: did mvn run with -am flag?')
+                        print('           Pre-R6.83 jars (no marker) are valid; post-R6.83 jars MUST emit R6.83 line.')
+                        print('           Post-R6.85b jars MUST emit both R6.85b lines.')
+                        if markers_snippet:
+                            print(f'           Recent log grep output: {markers_snippet[:200]}')
                     return 0
                 last_status = out.strip()[:200]
                 print(f'  ... {elapsed:.1f}s status not UP: {last_status}')
