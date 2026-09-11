@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""rebuild-actuator-and-deploy.py — DEPRECATED R6.81a.
+"""rebuild-divs-backend-with-actuator.py — DEPRECATED R6.81a.
 
-R6.81a (2026-09-11) consolidated this script + rebuild-divs-backend-with-actuator.py
+R6.81a (2026-09-11) consolidated this script + rebuild-actuator-and-deploy.py
 + the R6.80 jar-deploy path into a single canonical wrapper:
 
     D:\\AliCPT\\scripts\\build-and-deploy-jar.py
 
-The original R6.97 #2 actuator rebuild procedure used a stale `mvn -pl start package`
-command (without `-am`), which silently reused .m2 cached upstream JARs and shipped
+The original R6.103 procedure used a stale `mvn -pl start package` command
+(without `-am`), which silently reused .m2 cached upstream JARs and shipped
 stale code. The new wrapper HARD-CODES `-am` and verifies jar contents.
 
 USE THE NEW SCRIPT:
@@ -30,7 +30,7 @@ import sys
 
 def main():
     print('=' * 72)
-    print('DEPRECATED R6.81a: rebuild-actuator-and-deploy.py')
+    print('DEPRECATED R6.81a: rebuild-divs-backend-with-actuator.py')
     print('=' * 72)
     print()
     print('This script has been superseded by:')
