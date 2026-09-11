@@ -42,6 +42,21 @@ _badj = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_badj)
 
 
+def _patch_marker_check(z):
+    """R6.84b: stub z.check_marker_log so pre-existing R6.82 tests don't break.
+
+    Pre-R6.84b, cmd_deploy had an inlined `z.run(...)` for marker check; that
+    mocked fine because mock.MagicMock auto-creates z.run. Post-R6.84b, cmd_deploy
+    calls `z.check_marker_log(...)` and unpacks the result tuple. Auto-mocked
+    check_marker_log returns a MagicMock (not a 2-tuple), so tests that drive
+    cmd_deploy all the way through must explicitly return (True, '') here.
+
+    Tests focused on the marker helper itself (TestV1MarkerCheck) bind the real
+    function and do NOT use this patcher.
+    """
+    z.check_marker_log.return_value = (True, '')
+
+
 def _writestr_then_zip(outer_zip, name, include=()):
     """Create a nested zip inside an outer zip entry.
 
@@ -391,6 +406,7 @@ class TestTripleShaVerification(unittest.TestCase):
           5. (after restart) health polling loop
         """
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         # docker_ps returns a non-empty list (container is running)
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
         # sftp_put is a no-op for our purposes
@@ -531,6 +547,7 @@ class TestDeployBackup(unittest.TestCase):
                           non-backup commands (defaults to fall-through).
         """
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
         z.sftp_put = mock.MagicMock()
 
@@ -683,6 +700,7 @@ class TestCmdRollbackHappyPath(unittest.TestCase):
 
     def _make_mock_z(self, prev_sha='a' * 64):
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         prev_present_str = f'-rw-r--r-- 1 root root 71144400 Sep 10 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}'
@@ -744,6 +762,7 @@ class TestCmdRollbackNoPrevious(unittest.TestCase):
 
     def test_rollback_fails_when_no_previous_exists(self):
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         def run(cmd, timeout=60):
@@ -786,6 +805,7 @@ class TestCmdRollbackShaMismatch(unittest.TestCase):
     def test_rollback_aborts_on_post_restore_sha_mismatch(self):
         """If post-restore SHA != .previous SHA, rollback MUST abort before restart."""
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         def run(cmd, timeout=60):
@@ -878,6 +898,7 @@ class TestDeployBackupReviewFixes(unittest.TestCase):
 
     def _make_mock_z(self, size_check_returns=('OK\n', 0), rot_code=0, backup_code=0):
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
         z.sftp_put = mock.MagicMock()
 
@@ -937,6 +958,7 @@ class TestDeployBackupReviewFixes(unittest.TestCase):
         """Security Q5: when backup cp fails, message MUST mention .backup recovery path."""
         # No previous -> no rotation. Backup cp fails.
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
         z.sftp_put = mock.MagicMock()
 
@@ -976,6 +998,7 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
         MUST abort BEFORE SHA check and BEFORE docker restart.
         """
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         def run(cmd, timeout=60):
@@ -1009,6 +1032,7 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
     def test_rollback_happy_path_asserts_call_sequence(self):
         """C3: Happy path MUST follow strict sequence: SHA capture -> cp -> SHA verify -> restart."""
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         run_cmds = []
@@ -1073,6 +1097,7 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
     def test_rollback_conf_true_emits_audit_print(self):
         """Security Q1: args.conf=True MUST emit `[AUDIT] rollback invoked with --conf` print."""
         z = mock.MagicMock(name='z')
+        _patch_marker_check(z)  # R6.84b
         z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
 
         def run(cmd, timeout=60):
@@ -1112,6 +1137,180 @@ class TestCmdRollbackReviewFixes(unittest.TestCase):
             msg=f'final AUDIT summary line missing: {output[:500]}',
         )
 
+
+class TestV1MarkerCheck(unittest.TestCase):
+    """R6.84b: Zkb.check_marker_log() helper generalizes the R6.83 V1 marker check.
+
+    Pre-R6.84b, the V1 marker check was inlined at build-and-deploy-jar.py:621-635
+    (docker logs + grep -F + if/else warn-or-confirm). R6.84b moves the docker
+    invocation + grep + FOUND/MISSING echo + AND-checking into Zkb.check_marker_log(),
+    so future R6.x deploy verifications can reuse it without duplicating the
+    paramiko + docker + grep pipeline.
+
+    These tests pin the helper's contract:
+      - Single marker (str) — FOUND returned iff present
+      - Multiple markers (list[str]) — FOUND returned iff ALL present (AND check)
+      - Missing marker — returns False + non-empty snippet
+      - Marker is grep -F exact-match (substring + special chars literal)
+      - R6.83 single-marker scenario — passes current build-and-deploy-jar.py usage
+
+    Also pins that the refactored cmd_deploy still emits the [V1]/[WARN V1] line
+    (smoke test via captured stdout) so a future refactor doesn't silently drop
+    the marker verification entirely.
+    """
+
+    def setUp(self):
+        # Bind the REAL Zkb.check_marker_log to mocks so it executes against
+        # mock self.run return_value (which we control per-test). Without this,
+        # mock.MagicMock auto-creates check_marker_log as a child MagicMock that
+        # returns another MagicMock — causing "not enough values to unpack".
+        # We also need MethodType binding because Zkb.check_marker_log is a
+        # plain function with `self` as the first arg; assigning it to the mock
+        # without binding means `z.check_marker_log(container, marker)` skips `self`
+        # and binds `container` to it, leading to "missing 'marker' argument".
+        import importlib.util as _ilu
+        from types import MethodType
+        _spec = _ilu.spec_from_file_location('_zkb_for_test', r'C:\Users\28610\r684_staging\scripts\zkb.py')
+        _zkb = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_zkb)
+        self._check_marker_log = MethodType(_zkb.Zkb.check_marker_log, mock.MagicMock())
+
+    def _make_z(self, run_return):
+        """Build a mock Zkb whose .run returns run_return; .check_marker_log is REAL."""
+        z = mock.MagicMock(name='z')
+        z.run.return_value = run_return
+        from types import MethodType
+        # Re-bind to THIS specific mock so self.run points to this mock's run.
+        z.check_marker_log = MethodType(self._check_marker_log.__func__, z)
+        return z
+
+    def test_returns_true_when_marker_present(self):
+        """Helper returns True when the marker is in the recent log window."""
+        z = self._make_z((
+            'Some earlier log line\n'
+            '2026-09-11 12:00:00 INFO R6.83: HealthController probe executor initialized (2 threads, daemon=true)\n'
+            'More later log\n',
+            0,
+        ))
+        found, snippet = z.check_marker_log('divs-backend', 'R6.83: HealthController probe executor initialized')
+        self.assertTrue(found)
+        self.assertIn('R6.83: HealthController', snippet)
+
+    def test_returns_false_when_marker_absent(self):
+        """Helper returns False when no log line contains the marker."""
+        z = self._make_z((
+            'Starting Application on Tomcat\n'
+            'HealthController UP\n',
+            0,
+        ))
+        found, snippet = z.check_marker_log('divs-backend', 'R6.83: HealthController probe executor initialized')
+        self.assertFalse(found)
+        # Snippet still returned for caller inspection (raw log content).
+        self.assertIn('HealthController UP', snippet)
+
+    def test_returns_false_when_docker_logs_fails(self):
+        """Empty z.run output (e.g. docker not running, container down) -> False."""
+        z = self._make_z(('', 1))
+        found, snippet = z.check_marker_log('divs-backend', 'R6.83: marker')
+        self.assertFalse(found)
+        # Snippet should be empty (z.run returned ''); helper must not crash on None.
+        self.assertEqual(snippet, '')
+
+    def test_supports_list_of_markers_all_present(self):
+        """Multi-marker mode: list of strings, AND check (all must be present)."""
+        z = self._make_z((
+            'INFO  R6.83: HealthController probe executor initialized\n'
+            'INFO  R6.85b: LlmController RestTemplate initialized\n'
+            'INFO  R6.85b: PipelineProxyController RestTemplate initialized\n',
+            0,
+        ))
+        markers = [
+            'R6.83: HealthController probe executor initialized',
+            'R6.85b: LlmController RestTemplate initialized',
+            'R6.85b: PipelineProxyController RestTemplate initialized',
+        ]
+        found, snippet = z.check_marker_log('divs-backend', markers)
+        self.assertTrue(found)
+        self.assertIn('R6.85b: LlmController', snippet)
+        self.assertIn('R6.85b: PipelineProxyController', snippet)
+
+    def test_supports_list_of_markers_partial_present(self):
+        """Multi-marker mode: if ANY marker missing, returns False (AND check)."""
+        z = self._make_z((
+            'INFO  R6.83: HealthController probe executor initialized\n'
+            # R6.85b LlmController line is missing
+            'INFO  R6.85b: PipelineProxyController RestTemplate initialized\n',
+            0,
+        ))
+        markers = [
+            'R6.83: HealthController probe executor initialized',
+            'R6.85b: LlmController RestTemplate initialized',
+            'R6.85b: PipelineProxyController RestTemplate initialized',
+        ]
+        found, snippet = z.check_marker_log('divs-backend', markers)
+        self.assertFalse(found)
+        # Snippet shows what IS present so caller can see which is missing.
+        self.assertIn('R6.83: HealthController', snippet)
+        self.assertIn('R6.85b: PipelineProxyController', snippet)
+        self.assertNotIn('R6.85b: LlmController', snippet)
+
+    def test_uses_substring_match(self):
+        """Helper does substring matching, not regex — special chars in marker are literal."""
+        marker_with_special = 'R6.83: HealthController probe executor initialized (2 threads, daemon=true)'
+        z = self._make_z((f'INFO {marker_with_special}\n', 0))
+        found, _ = z.check_marker_log('divs-backend', marker_with_special)
+        self.assertTrue(found)
+        # Verify docker logs command was issued with --since 30s default
+        cmd_issued = z.run.call_args[0][0]
+        self.assertEqual(cmd_issued, 'docker logs --since 30s divs-backend 2>&1')
+
+    def test_snippet_truncated_to_500_chars(self):
+        """Run output snippet is capped at 500 chars to avoid runaway log lines.
+
+        Marker is placed at the END of the first 500 chars so the assertion
+        succeeds after truncation. The bulk of the B-tail is dropped.
+        """
+        marker = 'R6.83: marker found here'
+        # 100 A's + newline + marker = exactly 124 chars; the rest is B-tail.
+        huge_output = 'A' * 100 + '\n' + marker + '\n' + 'B' * 5000
+        z = self._make_z((huge_output, 0))
+        _, snippet = z.check_marker_log('divs-backend', marker)
+        self.assertLessEqual(len(snippet), 500)
+        self.assertIn(marker, snippet)
+        # Snippet length is exactly 500; the B-tail is heavily truncated.
+        # We don't assert NotIn('B') because the cutoff may land mid-B-run.
+        # The KEY invariant: len(snippet) <= 500 even though input is ~5124 chars.
+        self.assertGreater(len(huge_output), 5000)
+
+    def test_custom_since_and_timeout(self):
+        """Caller can override since and timeout kwargs (e.g. slow app warmup)."""
+        z = self._make_z(('INFO  R6.83: marker found\n', 0))
+        z.check_marker_log('divs-backend', 'R6.83: marker', since='5m', timeout=30)
+        cmd_issued = z.run.call_args[0][0]
+        self.assertIn('docker logs --since 5m', cmd_issued)
+        timeout_issued = z.run.call_args.kwargs.get('timeout') or z.run.call_args[1].get('timeout')
+        self.assertEqual(timeout_issued, 30)
+
+
+class TestCheckMarkerLogRefactor(unittest.TestCase):
+    """R6.84b: build-and-deploy-jar.py V1 marker path uses Zkb.check_marker_log().
+
+    Pins the R6.83 -> R6.84b refactor: cmd_deploy must call z.check_marker_log()
+    rather than the inlined `docker logs ... | grep -F ...` pipeline. Regression
+    guard against accidental revert to the inline pattern.
+    """
+
+    def test_cmd_deploy_calls_check_marker_log(self):
+        """Refactored cmd_deploy invokes z.check_marker_log with the R6.83 marker."""
+        # Read the cmd_deploy source to confirm refactor is in place.
+        source = Path(SCRIPT_PATH).read_text(encoding='utf-8')
+        # The refactored line uses z.check_marker_log(REMOTE_CONTAINER, 'R6.83: ...')
+        self.assertIn(
+            'z.check_marker_log(\n                        REMOTE_CONTAINER,\n'
+            "                        'R6.83: HealthController probe executor initialized',\n",
+            source,
+            msg='cmd_deploy should call z.check_marker_log() — refactor missing',
+        )
 
 
 if __name__ == '__main__':

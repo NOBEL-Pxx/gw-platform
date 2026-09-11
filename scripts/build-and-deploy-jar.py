@@ -612,17 +612,19 @@ def cmd_deploy(args):
                 if '"status":"UP"' in out:
                     print(f'  [OK] /api/health = UP after {elapsed:.1f}s')
                     print(f'    body: {out.strip()[:300]}')
-                    # R6.83 V1: marker log grep — verify parallel-executor bytecode actually deployed.
+                    # R6.83 V1 (generalized R6.84b): marker log check via Zkb.check_marker_log().
                     # HealthController.class API surface is identical pre/post R6.83 (same class
                     # path, same method signatures). Without this check, a `mvn -pl start package`
                     # without `-am` would silently ship stale bytecode and pass /api/health UP.
                     # Marker line emitted by HealthController.initProbeExecutor() @PostConstruct:
                     #   "R6.83: HealthController probe executor initialized (2 threads, daemon=true)"
-                    marker_out, marker_code = z.run(
-                        f'docker logs --since 30s {REMOTE_CONTAINER} 2>&1 | grep -F "R6.83: HealthController probe executor initialized" || true',
-                        timeout=10,
+                    # Future R6.x markers (e.g. R6.85b for LlmController/PipelineProxyController)
+                    # can be added to the list passed to check_marker_log() — see R6.84b plan.
+                    marker_found, marker_snippet = z.check_marker_log(
+                        REMOTE_CONTAINER,
+                        'R6.83: HealthController probe executor initialized',
                     )
-                    if 'R6.83: HealthController probe executor initialized' in marker_out:
+                    if marker_found:
                         print('  [V1] R6.83 marker found in container logs (parallel executor confirmed deployed)')
                     else:
                         # R6.83 marker absent — fallback: warn but don't abort (R6.83 is opt-in marker).
@@ -633,6 +635,8 @@ def cmd_deploy(args):
                         print('           If you are deploying R6.83 parallel probes, the jar has')
                         print('           stale bytecode. Check: did mvn run with -am flag?')
                         print('           Pre-R6.83 jars (no marker) are valid; post-R6.83 jars MUST emit this line.')
+                        if marker_snippet:
+                            print(f'           Recent log grep output: {marker_snippet[:200]}')
                     return 0
                 last_status = out.strip()[:200]
                 print(f'  ... {elapsed:.1f}s status not UP: {last_status}')

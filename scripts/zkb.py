@@ -425,7 +425,7 @@ class Zkb:
                 elif 'refused' in _msg or 'unreachable' in _msg or 'no route' in _msg:
                     out['containers_error'] = 'connection-refused'
                 else:
-                    out['containers_error'] = 'unknown-error' 
+                    out['containers_error'] = 'unknown-error'
         try:
             txt, _ = self.run('curl -sk --resolve "r692-smoketest.local:6002:127.0.0.1" '
                               '-w "\\nHTTP=%{http_code}\\n" '
@@ -440,6 +440,53 @@ class Zkb:
                 _msg = _re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '<ip>', _msg)
                 out['smoketest_error'] = _msg
         return out
+
+    def check_marker_log(self, container: str, marker,
+                         since: str = '30s', timeout: int = 10) -> tuple[bool, str]:
+        """R6.84b: Grep container logs for one or more marker strings.
+
+        Centralizes the R6.83 V1 marker check pattern (originally inlined in
+        build-and-deploy-jar.py:615-636) so future R6.x deploy verifications
+        can reuse it. Supports both single-marker (str) and multi-marker
+        (list[str]) — multi-marker is an AND check (all must be present).
+
+        Args:
+            container: Docker container name to inspect logs of.
+            marker: Either a single string (substring match) or a list of
+                strings (all required — returns True only if ALL are present).
+                Required to support future R6.x markers without helper churn.
+            since: Value passed to `docker logs --since` (default '30s').
+                Covers typical Spring Boot warmup; tune for slower apps.
+            timeout: SSH command timeout in seconds.
+
+        Returns:
+            Tuple of (found, log_snippet):
+              - found: True if all marker(s) are present in the recent log window.
+              - log_snippet: First 500 chars of docker logs output (truncated to
+                avoid runaway log lines in caller print output). Caller can
+                inspect this to see WHICH marker is missing if needed.
+
+        Implementation: Client-side grep on the docker logs output. We avoid
+        server-side FOUND/MISSING echo pipelines because:
+          1. Mocked tests cannot exercise shell pipelines — they'd always return
+             "FOUND" or "MISSING" depending on the wrapper's semantics, not on
+             the actual log content.
+          2. The decision is a simple substring check; doing it in Python keeps
+             the helper's contract predictable across SSH, dry-run, and tests.
+        """
+        if isinstance(marker, str):
+            markers = [marker]
+        else:
+            markers = list(marker)
+
+        cmd = 'docker logs --since {since} {container} 2>&1'.format(
+            since=since, container=container,
+        )
+        out, _code = self.run(cmd, timeout=timeout)
+        out = out or ''
+        found = all(m in out for m in markers)
+        snippet = out[:500]
+        return found, snippet
 
 
 # === CLI ===

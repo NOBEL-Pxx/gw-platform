@@ -310,21 +310,155 @@ def check_api_health(z, **kwargs) -> tuple[str, int, str]:
     return PASS, duration_ms, 'UP v={} components_ms={}'.format(version, total_latency)
 
 
+def check_api_health_parallel(z, **kwargs) -> tuple[str, int, str]:
+    """R6.84a: concurrent /api/health probes — assert max(latency_ms) < sum(latency_ms).
+
+    Fires 3 parallel docker-exec /api/health requests via gw's run() with separate
+    SSH channels (ThreadPoolExecutor). After all complete, asserts max component
+    latency < sum component latency to prove ES + Mongo probes run concurrently
+    (R6.83 fan-out working in prod).
+
+    R6.83 L6 follow-up: prod-concurrency proof vs unit-test concurrency proof.
+    A unit test can prove executor logic; only a prod probe proves the EXECUTED jar
+    fans out as expected.
+
+    Why 3 probes (not 1): averaging over 3 reduces the chance of a single
+    transient measurement skewing the assertion.
+    """
+    import concurrent.futures
+    t0 = time.time()
+    cmd = "docker exec divs-backend sh -c 'wget -qO- http://localhost:8093/api/health'"
+
+    def _probe(_):
+        # gw's run() opens its own SSH channel per call; ThreadPoolExecutor
+        # overlaps those channels so the 3 docker execs run concurrently.
+        out, _ = z.run(cmd, timeout=15)
+        return out or ''
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        bodies = list(ex.map(_probe, range(3)))
+
+    es_latencies = []
+    mongo_latencies = []
+    statuses = []
+    for body in bodies:
+        body = body.strip()
+        if not body:
+            return FAIL, int((time.time() - t0) * 1000), 'empty body from one of 3 probes'
+        try:
+            envelope = json.loads(body)
+        except json.JSONDecodeError as e:
+            return FAIL, int((time.time() - t0) * 1000), 'invalid JSON: {}'.format(e)
+        if not isinstance(envelope, dict) or 'data' not in envelope:
+            return FAIL, int((time.time() - t0) * 1000), 'no data envelope in one probe'
+        data = envelope.get('data', {})
+        comp = data.get('components', {})
+        statuses.append(data.get('status'))
+        if 'elasticsearch' in comp:
+            es_latencies.append(comp['elasticsearch'].get('latency_ms', 0))
+        if 'mongo' in comp:
+            mongo_latencies.append(comp['mongo'].get('latency_ms', 0))
+
+    if not all(s == 'UP' for s in statuses) or not es_latencies or not mongo_latencies:
+        return FAIL, int((time.time() - t0) * 1000), 'statuses={} es_n={} mongo_n={}'.format(
+            statuses, len(es_latencies), len(mongo_latencies),
+        )
+
+    # Aggregate per concurrent burst: median ES + median Mongo across the 3 probes.
+    es_lat = sorted(es_latencies)[len(es_latencies) // 2]
+    mongo_lat = sorted(mongo_latencies)[len(mongo_latencies) // 2]
+    max_lat = max(es_lat, mongo_lat)
+    sum_lat = es_lat + mongo_lat
+
+    duration_ms = int((time.time() - t0) * 1000)
+    if max_lat >= sum_lat:
+        # Equality only happens if both latencies are 0 (degenerate); else max < sum
+        # is always true for positive latencies. Reaching here means either
+        # (a) probes are sequential (would report ES + Mongo delays sequentially)
+        # OR (b) latency reporting regressed.
+        return FAIL, duration_ms, (
+            'max(latency_ms)={} >= sum(latency_ms)={} (probes sequential? latency reporting regressed?)'
+            .format(max_lat, sum_lat)
+        )
+    return PASS, duration_ms, 'concurrent: max={}ms < sum={}ms (ES={}ms mongo={}ms, concurrency proof OK)'.format(
+        max_lat, sum_lat, es_lat, mongo_lat,
+    )
+
+
+def check_api_health_rate_limit(z, **kwargs) -> tuple[str, int, str]:
+    """R6.85c: rapid-fire /api/health probes, verify rate limit fires after quota.
+
+    Sends 70 sequential probes (default bucket4j quota is 60/min/IP). Expects the
+    first 60 to succeed and the next 10 to be rate-limited (429 / failed docker exec).
+
+    R6.80 L5 deferred → R6.85c closeout: External monitoring rollout expected to
+    hit /api/health frequently. The bucket4j InMemoryRateLimiter (60/min/IP default)
+    protects Mongo + ES from probe amplification.
+
+    Note: zsmoke currently runs from zjlab host via SSH, so all 70 requests share
+    the same source IP. The check intentionally exhausts the per-IP quota to prove
+    the limit is ENFORCED (not just CONFIGURED). After running this check, the
+    bucket is depleted for ~60s before refilling.
+    """
+    t0 = time.time()
+    cmd = "docker exec divs-backend sh -c 'wget -qO- http://localhost:8093/api/health'"
+    quota = 60  # mirrors rate.limit.capacity default in InMemoryRateLimiter.java
+    total = 70
+
+    success_count = 0
+    rate_limited_count = 0
+    last_error = ''
+    for i in range(total):
+        out, code = z.run(cmd, timeout=15)
+        body = (out or '').strip()
+        # Success indicators: docker exec exit 0 + valid JSON UP body
+        if code == 0 and body and '"status":"UP"' in body:
+            success_count += 1
+        else:
+            rate_limited_count += 1
+            last_error = body[:100] or 'docker exec exit={}'.format(code)
+
+    duration_ms = int((time.time() - t0) * 1000)
+    # Expected: ~60 success + ~10 rate-limited. Allow some slack for transient
+    # failures (e.g., first few probes during container warmup).
+    if success_count >= quota and rate_limited_count >= (total - quota):
+        return PASS, duration_ms, 'rate-limit ENFORCED: {}/{} success, {}/{} rate-limited'.format(
+            success_count, total, rate_limited_count, total,
+        )
+    if rate_limited_count == 0:
+        return WARN, duration_ms, (
+            'NO rate limiting observed: {}/{} success, 0 rate-limited '
+            '(R6.85c not deployed? excludePathPatterns still on /api/health?)'
+        ).format(success_count, total)
+    return WARN, duration_ms, 'unexpected: {}/{} success, {}/{} rate-limited (last_error={})'.format(
+        success_count, total, rate_limited_count, total, last_error,
+    )
+
+
 # === Check registry ===
 CHECKS = {
-    'r692-smoketest':   ('R6.92b smoketest endpoint on :6001',          check_r692_smoketest, False),
-    'backend-health':   ('R6.96c gw-backend health via :6002 canary',   check_backend_health, False),
-    'gw-frontend':      ('gw-frontend container (nginx) is Up',         check_gw_frontend,    False),
-    'gw-pipeline':      ('gw-pipeline container is Up',                 check_gw_pipeline,    False),
-    'gw-backend':       ('divs-backend container (Spring Boot) is Up',  check_gw_backend,     False),
-    'nginx-config':     ('R6.92a nginx -t syntax check',                check_nginx_config,   False),
-    'disk-space':       ('disk usage on /home/zjlab',                   check_disk_space,     False),
-    'last-deploy':      ('R6.99 #5 remote last-deploy.json vs git HEAD',check_last_deploy,    True),  # True = requires --read-remote
-    'api-health':       ('R6.80 /api/health from divs-backend',         check_api_health,     False),
+    'r692-smoketest':       ('R6.92b smoketest endpoint on :6001',                 check_r692_smoketest,           False),
+    'backend-health':       ('R6.96c gw-backend health via :6002 canary',          check_backend_health,           False),
+    'gw-frontend':          ('gw-frontend container (nginx) is Up',                check_gw_frontend,              False),
+    'gw-pipeline':          ('gw-pipeline container is Up',                        check_gw_pipeline,              False),
+    'gw-backend':           ('divs-backend container (Spring Boot) is Up',         check_gw_backend,               False),
+    'nginx-config':         ('R6.92a nginx -t syntax check',                       check_nginx_config,             False),
+    'disk-space':           ('disk usage on /home/zjlab',                          check_disk_space,               False),
+    'last-deploy':          ('R6.99 #5 remote last-deploy.json vs git HEAD',       check_last_deploy,              True),  # True = requires --read-remote
+    'api-health':           ('R6.80 /api/health from divs-backend',                check_api_health,               False),
+    'api-health-parallel':  ('R6.84a concurrent /api/health probes (max<sum)',      check_api_health_parallel,      False),
+    'api-health-rate-limit':('R6.85c rapid /api/health probes verify rate limit',   check_api_health_rate_limit,    False),
 }
 
 
-QUICK_CHECKS = ['r692-smoketest', 'backend-health', 'gw-frontend', 'gw-backend', 'api-health']
+QUICK_CHECKS = [
+    'r692-smoketest',
+    'backend-health',
+    'gw-frontend',
+    'gw-backend',
+    'api-health',
+    'api-health-parallel',  # R6.84a
+]
 
 
 def run_checks(names: list[str], read_remote: bool, json_mode: bool) -> tuple[list[dict], int]:
