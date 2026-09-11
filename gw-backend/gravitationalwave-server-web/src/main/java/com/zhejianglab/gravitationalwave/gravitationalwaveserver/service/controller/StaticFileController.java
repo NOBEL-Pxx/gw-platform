@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -27,6 +29,27 @@ public class StaticFileController {
     private static final String BASE_DIRECTORY = "/app/Ali_PW";
     private static final String FITS_PATH_PREFIX = "fitsfile/";
     private static final String IMAGE_PATH_PREFIX = "imagefile/";
+
+    /**
+     * R6.85-A-V1MARKER: emit a recognizable startup log line so {@code build-and-deploy-jar.py}'s
+     * {@code check_marker_log} AND-check can confirm the bean lifecycle completed for this
+     * controller. See [[r685-summary]] for the R6.85 iron-rule convention.
+     */
+    @PostConstruct
+    public void init() {
+        log.info("R6.88: StaticFileController initialized");
+    }
+
+    /**
+     * R6.85-A-PREDESTROY: log shutdown so a container restart leaves a visible lifecycle trace.
+     * StaticFileController owns no RestTemplate/ExecutorService, so nothing to close; this is
+     * symmetry with R6.85b (LlmController + PipelineProxyController) for the post-deploy marker
+     * scanner.
+     */
+    @PreDestroy
+    public void shutdown() {
+        log.info("R6.88: StaticFileController shutting down");
+    }
 
     @Data
     @AllArgsConstructor
@@ -98,10 +121,15 @@ public class StaticFileController {
             }
 
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(resolvedPath));
-            String mediaType = getMediaTypeForFileName(resolvedPath.getFileName().toString());
+            Path fileName = resolvedPath.getFileName();
+            if (fileName == null) {
+                log.error("Resolved path has no filename component: {}", resolvedPath);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            }
+            String mediaType = getMediaTypeForFileName(fileName.toString());
 
             HttpHeaders headers = new HttpHeaders();
-            headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resolvedPath.getFileName() + "\"");
+            headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"");
             headers.add(HttpHeaders.CONTENT_TYPE, mediaType);
 
             return ResponseEntity.ok()

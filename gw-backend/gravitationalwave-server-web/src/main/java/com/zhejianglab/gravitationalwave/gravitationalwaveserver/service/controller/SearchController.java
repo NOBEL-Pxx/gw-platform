@@ -5,6 +5,8 @@ import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.respons
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.response.Response;
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.service.SearchService;
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.validation.CoordinateValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -23,8 +27,31 @@ import java.util.Objects;
 @RequestMapping("/api/app/gravitationalwave")
 public class SearchController {
 
+    private static final Logger log = LoggerFactory.getLogger(SearchController.class);
+
     @Autowired
     private SearchService searchService;
+
+    /**
+     * R6.85-A-V1MARKER: emit a recognizable startup log line so {@code build-and-deploy-jar.py}'s
+     * {@code check_marker_log} AND-check can confirm the bean lifecycle completed for this
+     * controller. See [[r685-summary]] for the R6.85 iron-rule convention.
+     */
+    @PostConstruct
+    public void init() {
+        log.info("R6.88: SearchController initialized");
+    }
+
+    /**
+     * R6.85-A-PREDESTROY: log shutdown so a container restart leaves a visible lifecycle trace.
+     * SearchController owns no RestTemplate/ExecutorService, so nothing to close; this is
+     * symmetry with R6.85b (LlmController + PipelineProxyController) for the post-deploy marker
+     * scanner.
+     */
+    @PreDestroy
+    public void shutdown() {
+        log.info("R6.88: SearchController shutting down");
+    }
 
     @GetMapping("/geoSearch")
     public Response<?> geoSearch(@RequestParam(required = false) Double ra,
@@ -34,6 +61,13 @@ public class SearchController {
                                  @RequestParam(required = false) String uuid,
                                  @RequestParam(defaultValue = "1") int page,
                                  @RequestParam(defaultValue = "-1") int page_size) throws IOException {
+
+        // R6.85-A-NULLGUARD: if @Autowired failed (e.g., SearchService bean missing), surface a
+        // 503 rather than letting the framework bubble an NPE to the caller.
+        if (searchService == null) {
+            log.error("SearchService not initialized — please retry in a moment");
+            return Response.wrapError("503", "Search service not initialized — please retry in a moment");
+        }
 
         String coordErr = CoordinateValidator.validate(ra, dec, radius);
         if (coordErr != null) {
@@ -71,6 +105,12 @@ public class SearchController {
                             @RequestParam(required = false) Double dec,
                             @RequestParam(required = false, defaultValue = "1") Double radius,
                             @RequestParam(required = false, defaultValue = "") String telescope) throws IOException {
+        // R6.85-A-NULLGUARD: same defense as geoSearch — surface a clear error rather than NPE.
+        if (searchService == null) {
+            log.error("SearchService not initialized — please retry in a moment");
+            return "Search service not initialized — please retry in a moment";
+        }
+
         QueryGeoSearchRequest request = new QueryGeoSearchRequest();
         request.setRa(ra);
         request.setDec(dec);
