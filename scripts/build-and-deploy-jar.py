@@ -252,12 +252,27 @@ def _instantiate_zkb():
     the env vars are typically unset, so we explicitly pass the
     sync-to-zjlab.py path. On zjlab itself the env vars are normally
     set, and the fallback is harmless (zkb prefers env vars).
+
+    R6.81b Tier 1 #3: explicit [WARN] log when fallback is missing so the
+    user/dev sees that the ZJLAB_* env-var-only path was taken. Without
+    this, a missing fallback would surface later as an opaque RuntimeError
+    from zkb.parse_creds() with no breadcrumb back to the missing file.
     """
     Zkb, err = _import_zkb()
     if err:
         return None, err
     if ZKB_SYNC_SCRIPT_FALLBACK.exists():
         return Zkb(sync_script_path=ZKB_SYNC_SCRIPT_FALLBACK), None
+    # Fallback missing — surface it now (R6.81b Tier 1 #3)
+    print(
+        f'[WARN] ZKB_SYNC_SCRIPT_FALLBACK not found: {ZKB_SYNC_SCRIPT_FALLBACK}',
+        file=sys.stderr,
+    )
+    print(
+        '[WARN] Attempting Zkb() with ZJLAB_* env vars only. If those are unset,'
+        ' zkb.parse_creds() will raise RuntimeError.',
+        file=sys.stderr,
+    )
     return Zkb(), None  # pragma: no cover - unusual Windows setup
 
 

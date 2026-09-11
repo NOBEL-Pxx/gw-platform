@@ -294,5 +294,199 @@ class TestConstants(unittest.TestCase):
         self.assertIn('/actuator/health', _badj.HEALTH_ENDPOINTS)
 
 
+# === Tier 1 #2 R6.81b — H1 + C1 regression coverage ===
+
+class TestInstantiateZkb(unittest.TestCase):
+    """R6.81a C1: _instantiate_zkb must pass sync_script_path when fallback exists.
+
+    Three cases:
+      A. _import_zkb fails  -> returns (None, err)
+      B. fallback exists   -> Zkb(sync_script_path=ZKB_SYNC_SCRIPT_FALLBACK)
+      C. fallback missing  -> Zkb()  (unusual Windows setup; pragma: no cover in source)
+    """
+
+    def test_returns_none_when_zkb_import_fails(self):
+        """C1 import-fail path: when zkb import raises, return (None, err) and never call Zkb."""
+        with mock.patch.object(_badj, '_import_zkb', return_value=(None, 'import error: boom')):
+            z, err = _badj._instantiate_zkb()
+        self.assertIsNone(z)
+        self.assertEqual(err, 'import error: boom')
+
+    def test_uses_fallback_when_present(self):
+        """Windows dev path: fallback file exists -> pass sync_script_path to Zkb."""
+        fake_fallback = Path(os.environ.get('TEMP', '/tmp')) / 'fake_sync.py'
+        fake_fallback.write_text('# fake sync-to-zjlab', encoding='utf-8')
+        self.addCleanup(fake_fallback.unlink, missing_ok=True)
+
+        # Zkb is imported inside _import_zkb() (not module-level), so the
+        # module has no `Zkb` attribute. Inject a sentinel MockZkb class
+        # so _instantiate_zkb() can call it; assert on the same sentinel.
+        MockZkb = mock.MagicMock(name='MockZkb_class')
+        MockZkb.return_value = mock.MagicMock(name='z_instance')
+
+        with mock.patch.object(_badj, '_import_zkb', return_value=(MockZkb, None)):
+            with mock.patch.object(_badj, 'ZKB_SYNC_SCRIPT_FALLBACK', fake_fallback):
+                z, err = _badj._instantiate_zkb()
+        self.assertIsNone(err)
+        self.assertIsNotNone(z)
+        MockZkb.assert_called_once_with(sync_script_path=fake_fallback)
+
+    def test_uses_zkb_no_args_when_fallback_missing(self):
+        """Unusual setup: fallback absent -> Zkb() + [WARN] emitted to stderr.
+
+        R6.81b Tier 1 #3: the warning is critical — without it, a missing
+        fallback surfaces later as an opaque RuntimeError from
+        zkb.parse_creds() with no breadcrumb back to the missing file.
+        """
+        MockZkb = mock.MagicMock(name='MockZkb_class')
+        MockZkb.return_value = mock.MagicMock(name='z_instance')
+
+        with mock.patch.object(_badj, '_import_zkb', return_value=(MockZkb, None)):
+            with mock.patch.object(_badj, 'ZKB_SYNC_SCRIPT_FALLBACK', Path('/nonexistent/sync.py')):
+                with mock.patch('sys.stderr', new=io.StringIO()) as fake_stderr:
+                    z, err = _badj._instantiate_zkb()
+                    captured_stderr = fake_stderr.getvalue()
+        self.assertIsNone(err)
+        self.assertIsNotNone(z)
+        MockZkb.assert_called_once_with()
+        # Tier 1 #3 invariant: explicit [WARN] must fire
+        self.assertIn('[WARN] ZKB_SYNC_SCRIPT_FALLBACK not found', captured_stderr)
+        self.assertIn('ZJLAB_* env vars only', captured_stderr)
+
+
+class TestTripleShaVerification(unittest.TestCase):
+    """R6.81a H1: triple SHA (local -> host -> container) must abort before docker restart.
+
+    Strategy: drive cmd_deploy with a mocked z (zkb) and a real fake jar. Use
+    args.conf=True to skip the user-prompt; use args.timeout=2-4s to keep the
+    health-poll loop short. Inspect z.run call list to assert that:
+      - host SHA mismatch -> return 1, 'docker restart' NEVER called
+      - container SHA mismatch -> return 1, 'docker restart' NEVER called
+      - all SHA match + UP health -> return 0, 'docker restart' called exactly once
+    """
+
+    def setUp(self):
+        self.tmp = Path(os.environ.get('TEMP', '/tmp')) / 'badj_h1_test'
+        self.tmp.mkdir(parents=True, exist_ok=True)
+        self.jar = self.tmp / 'start.jar'
+        _make_fake_jar(self.jar)
+        self.local_sha = _badj.sha256_file(self.jar)
+        self.local_size = self.jar.stat().st_size
+
+        # Patch TARGET_JAR to point at our fake jar so cmd_deploy finds it.
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', self.jar)
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def _make_mock_z(self, host_sha=None, container_sha=None, health_up=True):
+        """Construct a mock zkb-like object with configurable run() responses.
+
+        The deploy sequence of z.run() calls (in order) is:
+          1. 'mkdir -p ...'                       (mkdir the remote dir)
+          2. 'sha256sum ...' on host              (HOST SHA)
+          3. 'docker cp ...'                      (the copy)
+          4. 'docker exec ... sha256sum ...'      (CONTAINER SHA)
+          5. (after restart) health polling loop
+        """
+        z = mock.MagicMock(name='z')
+        # docker_ps returns a non-empty list (container is running)
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+        # sftp_put is a no-op for our purposes
+        z.sftp_put = mock.MagicMock()
+
+        # run() returns (stdout, exit_code). Map by command substring.
+        def run(cmd, timeout=60):
+            if 'sha256sum' in cmd and 'docker exec' not in cmd:
+                return (f'{host_sha}  /home/zjlab/gw-backend/start.jar\n', 0)
+            if 'docker exec' in cmd and 'sha256sum' in cmd:
+                return (f'{container_sha}  /home/gravitational-wave-backend/app.jar\n', 0)
+            if 'docker cp' in cmd:
+                return ('', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                if health_up:
+                    return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+                return ('{"code":1,"message":"down"}', 1)
+            return ('', 0)
+
+        z.run.side_effect = run
+        return z
+
+    def _make_args(self, timeout=2):
+        args = mock.MagicMock()
+        args.conf = True   # skip interactive prompt
+        args.timeout = timeout
+        return args
+
+    def _patch_instantiate(self, z):
+        """Patch _instantiate_zkb to return our mock z."""
+        return mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None))
+
+    def test_host_sha_mismatch_aborts_before_restart(self):
+        """H1 host step: when host SHA != local_sha, return 1 and never restart."""
+        z = self._make_mock_z(host_sha='a' * 64, container_sha=self.local_sha)
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 1)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart should NEVER be called on host SHA mismatch; got: {restart_calls}',
+        )
+        # Confirm host SHA check actually fired
+        sha_checks = [c for c in run_calls if 'sha256sum' in c and 'docker exec' not in c]
+        self.assertGreaterEqual(len(sha_checks), 1, msg='host sha256sum call must fire')
+
+    def test_container_sha_mismatch_aborts_before_restart(self):
+        """H1 container step: when container SHA != local_sha, return 1 and never restart."""
+        z = self._make_mock_z(host_sha=self.local_sha, container_sha='b' * 64)
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 1)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart should NEVER be called on container SHA mismatch; got: {restart_calls}',
+        )
+        # Confirm both host + container SHA checks fired
+        host_shas = [c for c in run_calls if 'sha256sum' in c and 'docker exec' not in c]
+        cont_shas = [c for c in run_calls if 'docker exec' in c and 'sha256sum' in c]
+        self.assertGreaterEqual(len(host_shas), 1, msg='host sha256sum call must fire')
+        self.assertGreaterEqual(len(cont_shas), 1, msg='container sha256sum call must fire')
+
+    def test_all_sha_match_proceeds_to_restart(self):
+        """H1 happy path: all 3 SHAs match + UP -> return 0 + restart fires exactly once."""
+        z = self._make_mock_z(
+            host_sha=self.local_sha,
+            container_sha=self.local_sha,
+            health_up=True,
+        )
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args(timeout=4))
+        self.assertEqual(rc, 0)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            len(restart_calls), 1,
+            msg=f'docker restart must fire exactly once on happy path; got {len(restart_calls)}',
+        )
+        # z.close() must be called (try/finally contract)
+        z.close.assert_called_once_with()
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
