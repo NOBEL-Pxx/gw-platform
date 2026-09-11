@@ -1293,28 +1293,30 @@ class TestV1MarkerCheck(unittest.TestCase):
 
 
 class TestCheckMarkerLogRefactor(unittest.TestCase):
-    """R6.84b + R6.85b: build-and-deploy-jar.py V1 marker path uses Zkb.check_marker_log().
+    """R6.84b + R6.85b + R6.88: build-and-deploy-jar.py V1 marker path uses Zkb.check_marker_log().
 
-    Pins the R6.83 -> R6.84b refactor (single marker) AND the R6.85b extension
-    (multi-marker AND-check for HealthController + LlmController + PipelineProxyController).
+    Pins the R6.83 -> R6.84b refactor (single marker), the R6.85b extension
+    (multi-marker AND-check for HealthController + LlmController + PipelineProxyController),
+    AND the R6.88 extension (StaticFileController + SearchController + ImageCutoutController).
     cmd_deploy must call z.check_marker_log() rather than the inlined
     `docker logs ... | grep -F ...` pipeline. Regression guard against accidental
-    revert to the inline pattern, AND against silent removal of the R6.85b markers
+    revert to the inline pattern, AND against silent removal of any marker
     (which would re-introduce the R6.80 bug where stale upstream bytecode passed
     /api/health UP but lacked the new lifecycle hooks).
     """
 
     def test_cmd_deploy_calls_check_marker_log_with_all_markers(self):
-        """Refactored cmd_deploy invokes z.check_marker_log with the 3-marker AND-check.
+        """Refactored cmd_deploy invokes z.check_marker_log with the 6-marker AND-check.
 
         R6.85b added 2 more markers (LlmController + PipelineProxyController RestTemplate
-        init). The check must now be a list of 3 markers passed to check_marker_log so
-        that an mvn build without -am (R6.80 lesson) fails the AND-check rather than
-        silently shipping stale bytecode.
+        init). R6.88 added 3 more (StaticFileController + SearchController + ImageCutoutController
+        R6.85-A application). The check must now be a list of 6 markers passed to check_marker_log
+        so that an mvn build without -am (R6.80 lesson) fails the AND-check rather than silently
+        shipping stale bytecode.
         """
         source = Path(SCRIPT_PATH).read_text(encoding='utf-8')
         # The refactored lines use z.check_marker_log(REMOTE_CONTAINER, v1_markers)
-        # where v1_markers is a 3-element list of R6.83 + R6.85b markers.
+        # where v1_markers is a 6-element list of R6.83 + R6.85b + R6.88 markers.
         self.assertIn(
             'markers_found, markers_snippet = z.check_marker_log(\n'
             '                        REMOTE_CONTAINER,\n'
@@ -1323,15 +1325,18 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             source,
             msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers) — refactor missing',
         )
-        # All 3 markers must be present in v1_markers list
+        # All 6 markers must be present in v1_markers list
         for marker in (
             'R6.83: HealthController probe executor initialized',
             'R6.85b: LlmController RestTemplate initialized',
             'R6.85b: PipelineProxyController RestTemplate initialized',
+            'R6.88: StaticFileController initialized',
+            'R6.88: SearchController initialized',
+            'R6.88: ImageCutoutController initialized',
         ):
             self.assertIn(
                 marker, source,
-                msg=f'cmd_deploy must check marker {marker!r} — R6.85b AND-check incomplete',
+                msg=f'cmd_deploy must check marker {marker!r} — R6.85b+R6.88 AND-check incomplete',
             )
 
 

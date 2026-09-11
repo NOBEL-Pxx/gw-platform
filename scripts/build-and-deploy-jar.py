@@ -618,20 +618,29 @@ def cmd_deploy(args):
                 if '"status":"UP"' in out:
                     print(f'  [OK] /api/health = UP after {elapsed:.1f}s')
                     print(f'    body: {out.strip()[:300]}')
-                    # R6.83 V1 + R6.85b markers via Zkb.check_marker_log() (generalized R6.84b).
-                    # 3-marker AND-check: HealthController (R6.83) + LlmController (R6.85b) + PipelineProxyController (R6.85b).
+                    # R6.83 V1 + R6.85b + R6.88 markers via Zkb.check_marker_log() (generalized R6.84b).
+                    # 6-marker AND-check: HealthController (R6.83) + LlmController (R6.85b) +
+                    #   PipelineProxyController (R6.85b) + StaticFileController (R6.88) +
+                    #   SearchController (R6.88) + ImageCutoutController (R6.88).
                     # Without this AND-check, a `mvn -pl start package` without `-am` would silently ship
-                    # stale LlmController/PipelineProxyController bytecode and pass /api/health UP.
-                    # KEY_CLASSES whitelist cannot distinguish R6.80 vs R6.85 bytecode because both
-                    # LlmController.class + PipelineProxyController.class existed before.
+                    # stale LlmController/PipelineProxyController/StaticFileController/SearchController/
+                    # ImageCutoutController bytecode and pass /api/health UP.
+                    # KEY_CLASSES whitelist cannot distinguish R6.80 vs R6.85 vs R6.88 bytecode because
+                    # all 6 controller classes existed before their respective marker log lines were added.
                     # Marker lines emitted by @PostConstruct methods:
                     #   R6.83:  "R6.83: HealthController probe executor initialized (2 threads, daemon=true)"
                     #   R6.85b: "R6.85b: LlmController RestTemplate initialized (connect=10s, read=30s)"
                     #   R6.85b: "R6.85b: PipelineProxyController RestTemplate initialized (connect=30s, read=30s)"
+                    #   R6.88:  "R6.88: StaticFileController initialized"
+                    #   R6.88:  "R6.88: SearchController initialized"
+                    #   R6.88:  "R6.88: ImageCutoutController initialized"
                     v1_markers = [
                         'R6.83: HealthController probe executor initialized',
                         'R6.85b: LlmController RestTemplate initialized',
                         'R6.85b: PipelineProxyController RestTemplate initialized',
+                        'R6.88: StaticFileController initialized',
+                        'R6.88: SearchController initialized',
+                        'R6.88: ImageCutoutController initialized',
                     ]
                     markers_found, markers_snippet = z.check_marker_log(
                         REMOTE_CONTAINER,
