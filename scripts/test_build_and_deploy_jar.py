@@ -1313,5 +1313,126 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
         )
 
 
+class TestR686CurlProbeFix(unittest.TestCase):
+    """R6.86-A: build-and-deploy-jar.py must NOT use `curl` for in-container probes.
+
+    Context: divs-backend container is busybox shell (wget only, NO curl).
+    Pre-R6.86 cmd_deploy polled /api/health via
+    `docker exec {container} curl -sf -m 5 {health_url}` — every poll
+    returned exit 126 (curl not found), falsely reporting deploy failure for
+    120s while the app was always healthy (see [[divs-backend-curl-missing]] +
+    [[r685-summary]] 2026-09-11 incident).
+
+    R6.86-A fix: replace curl with `wget -qO- -T 5 --tries=1`. wget is the
+    busybox HTTP client and is guaranteed present in divs-backend. The flag
+    choices are critical (not arbitrary):
+      -q        : quiet — emit only response body to stdout (no progress bar)
+      -O -      : write body to stdout (so the polling loop can parse JSON)
+      -T 5      : 5-second read timeout (wget's flag is -T, NOT curl's -m).
+                  Short timeout is essential: the loop polls every 2s, so a
+                  stuck probe would block the next poll iteration. 5s is
+                  generous for localhost /api/health (which returns <100ms).
+      --tries=1 : disable wget's default retry (20 attempts with exponential
+                  backoff). Without this, a single slow response would cause
+                  wget to retry for ~minutes, blocking the entire 120s
+                  timeout window in retries instead of fast-failing.
+
+    A future maintainer who "simplifies" the flags (e.g., drops -T 5 or
+    --tries=1) will re-introduce the original false-alarm class. The companion
+    test `test_probe_wget_has_timeout_and_tries` pins these flags.
+
+    These tests pin the iron rule: cmd_deploy probe + diagnose hints must
+    NOT contain the string `curl`. A future refactor that re-introduces curl
+    (e.g., copy-pasting from a tutorial) will fail this test.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        cls.source_path = Path(r'D:\AliCPT\scripts\build-and-deploy-jar.py')
+        cls.source = cls.source_path.read_text(encoding='utf-8')
+
+    def _section_around_probe(self) -> str:
+        """Extract the cmd_deploy wait-for-UP loop section."""
+        start = self.source.find('# 5. Wait for /api/health = UP')
+        end = self.source.find('print(\'Diagnose:\'', start)
+        if start < 0 or end < 0:
+            self.fail('Could not locate cmd_deploy wait-for-UP + diagnose sections')
+        return self.source[start:end]
+
+    def _diagnose_section(self) -> str:
+        """Extract the diagnose hints section printed on probe timeout."""
+        start = self.source.find('print(\'Diagnose:\'')
+        end = self.source.find('return 1', start)
+        if start < 0 or end < 0:
+            self.fail('Could not locate diagnose hints section')
+        return self.source[start:end]
+
+    def test_probe_uses_wget_not_curl(self):
+        """The wait-for-UP probe must call wget, not curl.
+
+        Rationale comments may mention the OLD curl pattern (to explain why
+        wget is used), but the actual probe code must use wget.
+        """
+        section = self._section_around_probe()
+        # The probe must mention wget (the actual probe tool)
+        self.assertIn('wget', section, msg='probe missing wget')
+        # Capture the multi-line f-string: from `probe_cmd = (` until matching `)`
+        import re
+        m = re.search(r'probe_cmd\s*=\s*\((.*?)\)', section, re.DOTALL)
+        self.assertIsNotNone(m, msg='Could not find probe_cmd = (...) block')
+        probe_body = m.group(1)
+        # The f-string body must contain wget (the busybox HTTP client)
+        self.assertIn('wget', probe_body, msg='probe_cmd f-string missing wget: {}'.format(probe_body))
+        # And must NOT contain curl
+        self.assertNotIn('curl', probe_body, msg='probe_cmd f-string still uses curl: {}'.format(probe_body))
+        # Also ban any non-comment code line with docker exec + curl
+        for line in section.splitlines():
+            stripped = line.strip()
+            # Skip pure comment lines (rationale explanations)
+            if stripped.startswith('#'):
+                continue
+            if 'docker exec' in line and 'curl' in line:
+                self.fail('cmd_deploy wait-for-UP section has docker exec + curl (CODE): {}'.format(stripped))
+
+    def test_probe_wget_has_timeout_and_tries(self):
+        """wget must use -T (timeout) and --tries=1 to fail fast inside container."""
+        section = self._section_around_probe()
+        self.assertIn('-T 5', section, msg='wget missing -T 5 timeout')
+        self.assertIn('--tries=1', section, msg='wget missing --tries=1 (must NOT retry)')
+
+    def test_diagnose_hints_no_curl(self):
+        """The diagnose-hint block (printed on probe timeout) must not suggest curl.
+
+        Per [[divs-backend-curl-missing]] — busybox container has no curl.
+        Suggesting curl in the diagnose output would mislead the operator.
+        """
+        section = self._diagnose_section()
+        # We allow `wget` (the working tool) but ban `curl`
+        # except in comments explicitly noting curl is NOT available.
+        for line in section.splitlines():
+            stripped = line.strip()
+            # Skip pure comment lines that explain the curl absence
+            if stripped.startswith('#') and 'curl' in stripped:
+                continue
+            # Skip the R6.86-A rationale comment
+            if 'R6.86-A' in stripped and 'curl' in stripped:
+                continue
+            self.assertNotIn(
+                'curl', line,
+                msg='diagnose section suggests curl to operator (busybox container): {}'.format(stripped))
+
+    def test_r686a_rationale_comment_present(self):
+        """A comment block must explain WHY we use wget (R6.86-A iron rule provenance)."""
+        self.assertIn(
+            'R6.86-A',
+            self.source,
+            msg='R6.86-A rationale comment missing from build-and-deploy-jar.py')
+        self.assertIn(
+            'busybox',
+            self.source,
+            msg='R6.86-A rationale must mention busybox (the root cause)')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

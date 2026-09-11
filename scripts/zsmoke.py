@@ -386,53 +386,122 @@ def check_api_health_parallel(z, **kwargs) -> tuple[str, int, str]:
 
 
 def check_api_health_rate_limit(z, **kwargs) -> tuple[str, int, str]:
-    """R6.85c: rapid-fire /api/health probes, verify rate limit fires after quota.
+    """R6.85c + R6.86: rapid-fire /api/health probes, verify rate limit fires.
 
-    Sends 70 sequential probes (default bucket4j quota is 60/min/IP). Expects the
-    first 60 to succeed and the next 10 to be rate-limited (429 / failed docker exec).
+    R6.85c design (sequential): 70 sequential docker-exec wget calls — fails in
+    practice because each SSH-tunneled docker-exec takes ~1s, bucket4j
+    Refill.intervally(200, 1m) lets ~3.33 req/s through, and 1 req/s < 3.33/s,
+    so the bucket never depletes. Result: ALL 70 = 200, false-negative.
 
-    R6.80 L5 deferred → R6.85c closeout: External monitoring rollout expected to
-    hit /api/health frequently. The bucket4j InMemoryRateLimiter (60/min/IP default)
-    protects Mongo + ES from probe amplification.
+    R6.86 fix (parallel): 50 background jobs × 5 reqs = 250 reqs fired in <5s.
+    Bursts the bucket faster than refill, so 200/min/IP cap fires for the tail.
+    Active profile `redis` overrides default 60 → 200/min/IP
+    (application-redis.properties: rate.limit.capacity=200). With redis profile
+    (production default), expected: 200x200 + 50x429 = 250.
 
-    Note: zsmoke currently runs from zjlab host via SSH, so all 70 requests share
-    the same source IP. The check intentionally exhausts the per-IP quota to prove
-    the limit is ENFORCED (not just CONFIGURED). After running this check, the
-    bucket is depleted for ~60s before refilling.
+    Why parallel-burst works where sequential fails:
+      - Sequential: 250 reqs @ ~1s each through SSH = ~250s wall clock
+      - Parallel:   250 reqs in 50 bg jobs firing simultaneously = <5s wall clock
+      - Refill rate: 200/60s = 3.33/s; sequential (1/s) stays under quota;
+        parallel (50/s) overshoots quota, depleting in ~4.3s
+      - bucket4j Refill.intervally semantics: full 200-token chunk refilled
+        every 60s (NOT 200 spread evenly across 60s). This means each refilled
+        instant the bucket briefly has 200 tokens available, which sequential
+        probes drain one-by-one before the next refill window. Parallel burst
+        fires faster than refill can replenish, depleting permanently.
+
+    C1-DEPLOY fix: R6.86's first iteration used `grep -o "HTTP/[0-9.]* [0-9]*"`
+    on wget stdout to extract HTTP status, but wget -q emits the JSON body
+    (NOT the HTTP status line) — grep never matched, check always returned
+    FAIL. Fix uses body discriminator: `\"status\":\"UP\"` (HealthController
+    JSON envelope on 200) vs absent (bucket4j 429 envelope).
     """
     t0 = time.time()
-    cmd = "docker exec divs-backend sh -c 'wget -qO- http://localhost:8093/api/health'"
-    quota = 60  # mirrors rate.limit.capacity default in InMemoryRateLimiter.java
-    total = 70
+    quota = 200  # matches application-redis.properties rate.limit.capacity=200 (prod)
+    # Quota=200, total=250 (50 over). Expect ~200 success + ~50 rate-limited.
+    total = quota + 50
+    bg_jobs = 50
+    reqs_per_job = 5  # 50 × 5 = 250 total
 
+    # Compose single-shot command: spawn 50 bg subshells each firing 5 wget
+    # requests. Output is HTTP code per line, then concatenate + sort + uniq -c.
+    # All 50 subshells share stdout (captured in /tmp/rl_results_N.txt).
+    #
+    # R6.86 + C1-DEPLOY fix: previous pattern used `grep -o "HTTP/[0-9.]* [0-9]*"`
+    # to extract the HTTP status line, but `wget -qO-` emits JSON body (not
+    # status line) so the grep NEVER matched and the check always returned
+    # FAIL on live runs. Unit tests passed only because they mocked z.run().
+    #
+    # New approach: body discriminator. The 200 path body contains
+    # `"status":"UP"` (HealthController JSON). The 429 path body (bucket4j
+    # interceptor rejection) does NOT contain `"status":"UP"`. So:
+    #   body=$(wget -qO- ... 2>/dev/null); if echo "$body" | grep -q '"status":"UP"'
+    #   then echo 200 else echo 429 >> /tmp/rl_results_${j}.txt
+    # Also handles wget network/timeout failures correctly: empty body fails
+    # the grep, echoes 429 (acceptable mis-classification; not a real 429).
+    inner_loop = (
+        'for i in $(seq 1 {reqs_per_job}); do '
+        'body=$(wget -qO- -T 5 --tries=1 http://localhost:8093/api/health 2>/dev/null); '
+        'if echo "$body" | grep -q \'"status":"UP"\'; then '
+        'echo 200; '
+        'else '
+        'echo 429; '
+        'fi >> /tmp/rl_results_${{j}}.txt; '
+        'done'
+    ).format(reqs_per_job=reqs_per_job)
+    full_cmd = (
+        'rm -f /tmp/rl_results_*.txt; '
+        'for j in $(seq 1 {bg_jobs}); do '
+        '( {inner_loop} ) & '
+        'done; wait; '
+        'cat /tmp/rl_results_*.txt 2>/dev/null | sort | uniq -c'
+    ).format(bg_jobs=bg_jobs, inner_loop=inner_loop)
+
+    out, code = z.run(full_cmd, timeout=60)
+    body = (out or '').strip()
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if code != 0 or not body:
+        return FAIL, duration_ms, 'parallel burst failed: code={} body={}'.format(
+            code, body[:200])
+
+    # Parse " 200 200\n  50 429" style output
     success_count = 0
     rate_limited_count = 0
-    last_error = ''
-    for i in range(total):
-        out, code = z.run(cmd, timeout=15)
-        body = (out or '').strip()
-        # Success indicators: docker exec exit 0 + valid JSON UP body
-        if code == 0 and body and '"status":"UP"' in body:
-            success_count += 1
+    other_codes = []
+    for line in body.splitlines():
+        parts = line.strip().split()
+        if len(parts) != 2:
+            continue
+        try:
+            count = int(parts[0])
+            http_code = int(parts[1])
+        except (ValueError, IndexError):
+            continue
+        if http_code == 200:
+            success_count += count
+        elif http_code == 429:
+            rate_limited_count += count
         else:
-            rate_limited_count += 1
-            last_error = body[:100] or 'docker exec exit={}'.format(code)
+            other_codes.append((count, http_code))
 
-    duration_ms = int((time.time() - t0) * 1000)
-    # Expected: ~60 success + ~10 rate-limited. Allow some slack for transient
-    # failures (e.g., first few probes during container warmup).
+    # Expected: ~200 success + ~50 rate-limited
     if success_count >= quota and rate_limited_count >= (total - quota):
-        return PASS, duration_ms, 'rate-limit ENFORCED: {}/{} success, {}/{} rate-limited'.format(
-            success_count, total, rate_limited_count, total,
-        )
+        return PASS, duration_ms, (
+            'rate-limit ENFORCED (parallel burst {}ms): {}/{} success, {}/{} rate-limited'
+        ).format(duration_ms, success_count, total, rate_limited_count, total)
     if rate_limited_count == 0:
         return WARN, duration_ms, (
-            'NO rate limiting observed: {}/{} success, 0 rate-limited '
+            'NO rate limiting observed (parallel burst): {}/{} success, 0 rate-limited '
             '(R6.85c not deployed? excludePathPatterns still on /api/health?)'
         ).format(success_count, total)
-    return WARN, duration_ms, 'unexpected: {}/{} success, {}/{} rate-limited (last_error={})'.format(
-        success_count, total, rate_limited_count, total, last_error,
-    )
+    if other_codes:
+        return WARN, duration_ms, (
+            'unexpected codes in parallel burst: {}/{} success, {}/{} 429, other={} (full={})'
+        ).format(success_count, total, rate_limited_count, total, other_codes, body[:300])
+    return WARN, duration_ms, (
+        'unexpected: {}/{} success, {}/{} rate-limited (full={})'
+    ).format(success_count, total, rate_limited_count, total, body[:300])
 
 
 # === Check registry ===

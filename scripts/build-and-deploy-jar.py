@@ -603,10 +603,16 @@ def cmd_deploy(args):
         last_status = None
         while time.time() - start < timeout_s:
             elapsed = time.time() - start
-            out, code = z.run(
-                f'docker exec {REMOTE_CONTAINER} curl -sf -m 5 {health_url}',
-                timeout=15,
+            # R6.86-A: probe via wget — divs-backend container is busybox shell
+            # (has wget but NOT curl). Pre-R6.86 used `docker exec curl -sf -m 5`
+            # which returned exit 126 with "OCI runtime exec failed: curl not
+            # found" for 120s, falsely reporting deploy failure while the app
+            # was always healthy. See [[divs-backend-curl-missing]] + [[r685-summary]]
+            # incident 2026-09-11. wget -T 5 = 5s timeout (-T is wget's flag).
+            probe_cmd = (
+                f'docker exec {REMOTE_CONTAINER} wget -qO- -T 5 --tries=1 {health_url}'
             )
+            out, code = z.run(probe_cmd, timeout=15)
             if code == 0 and out.strip():
                 # Parse Response.wrapSuccess envelope: {"code":0,"message":"success","data":{"status":"UP",...}}
                 if '"status":"UP"' in out:
@@ -651,7 +657,7 @@ def cmd_deploy(args):
                 last_status = out.strip()[:200]
                 print(f'  ... {elapsed:.1f}s status not UP: {last_status}')
             else:
-                print(f'  ... {elapsed:.1f}s curl exit={code} (container still starting)')
+                print(f'  ... {elapsed:.1f}s wget exit={code} (container still starting)')
             time.sleep(2)
 
         print()
@@ -660,7 +666,19 @@ def cmd_deploy(args):
         print()
         print('Diagnose:')
         print(f'  docker logs {REMOTE_CONTAINER} --tail 100')
-        print(f'  docker exec {REMOTE_CONTAINER} curl -v http://localhost:{BACKEND_PORT}/actuator/health')
+        # R6.86-A: divs-backend is busybox; use wget not curl for in-container probes.
+        # Flags match probe_cmd (line 612) so operators copy-pasting the hint
+        # get the same fail-fast behavior:
+        #   -q   = quiet (no progress; body only)
+        #   -O - = stdout
+        #   -T 5 = 5s read timeout (wget's flag is -T, NOT curl's -m)
+        #   --tries=1 = single attempt, no retry (default retries 20 with backoff,
+        #               would block the polling loop on a slow container)
+        # busybox wget exit codes:
+        #   0 = success (HTTP 2xx), 4 = network/connect failure, 5 = SSL verify,
+        #   8 = server error response (4xx/5xx).
+        print(f'  docker exec {REMOTE_CONTAINER} wget -qO- -T 5 --tries=1 '
+              f'http://localhost:{BACKEND_PORT}/api/health')
         print(f'  docker exec {REMOTE_CONTAINER} ls -la {CONTAINER_JAR_PATH}')
         return 1
     finally:
