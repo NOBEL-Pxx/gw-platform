@@ -488,5 +488,631 @@ class TestTripleShaVerification(unittest.TestCase):
         z.close.assert_called_once_with()
 
 
+
+
+# === R6.82 — rollback subcommand + deploy backup step regression coverage ===
+
+# R6.82 — new test classes to append to test_build_and_deploy_jar.py
+# 5 test classes covering:
+#   - TestDeployBackup (3 tests): cmd_deploy backup step behavior
+#   - TestCmdRollbackHappyPath (1 test): cmd_rollback full sequence
+#   - TestCmdRollbackNoPrevious (1 test): cmd_rollback when no previous jar
+#   - TestCmdRollbackShaMismatch (1 test): H1 invariant extended to rollback
+#   - TestCliRollbackRegistered (1 test): subcommand visible in --help
+# Total: 7 new tests
+
+class TestDeployBackup(unittest.TestCase):
+    """R6.82-A: cmd_deploy MUST rotate app.jar -> app.jar.previous before docker cp.
+
+    The backup step is the pre-condition for `rollback`. Without it, a bad
+    deploy would be unrecoverable. This test class hardens the invariant.
+    """
+
+    def setUp(self):
+        self.tmp = Path(os.environ.get('TEMP', '/tmp')) / 'badj_r682_test'
+        self.tmp.mkdir(parents=True, exist_ok=True)
+        self.jar = self.tmp / 'start.jar'
+        _make_fake_jar(self.jar)
+        self.local_sha = _badj.sha256_file(self.jar)
+
+        # Patch TARGET_JAR so cmd_deploy finds our fake jar
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', self.jar)
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def _make_mock_z(self, ls_prev_code=1, ls_prev_out='', other_cmd_returns=None):
+        """Construct a mock z where backup-step behavior is controllable.
+
+        ls_prev_code: 0 = .previous exists (rotation needed), 1 = does not (fresh)
+        ls_prev_out:  string content of the ls -la output when ls_prev_code=0
+        other_cmd_returns: dict mapping command-substring -> (out, code) for
+                          non-backup commands (defaults to fall-through).
+        """
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+        z.sftp_put = mock.MagicMock()
+
+        def run(cmd, timeout=60):
+            # Backup-step responses
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (ls_prev_out, ls_prev_code)
+            if 'app.jar.previous' in cmd and 'cp ' in cmd and 'app.jar.backup' in cmd:
+                # rotation previous -> backup
+                return ('', 0)
+            if 'test -s' in cmd and 'app.jar.backup' in cmd:
+                # R6.82 C1: rotation size check — default OK
+                return ('OK\n', 0)
+            if 'app.jar' in cmd and 'cp ' in cmd and 'app.jar.previous' in cmd:
+                # backup current app.jar -> .previous
+                return ('', 0)
+            # other-command overrides
+            if other_cmd_returns:
+                for substr, ret in other_cmd_returns.items():
+                    if substr in cmd:
+                        return ret
+            # defaults for the deploy sequence after backup
+            if 'sha256sum' in cmd and 'docker exec' not in cmd:
+                return (f'{self.local_sha}  /home/zjlab/gw-backend/start.jar\n', 0)
+            if 'docker exec' in cmd and 'sha256sum' in cmd:
+                return (f'{self.local_sha}  /home/gravitational-wave-backend/app.jar\n', 0)
+            if 'docker cp' in cmd:
+                return ('', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+        return z
+
+    def _make_args(self, timeout=2, conf=True):
+        args = mock.MagicMock()
+        args.conf = conf
+        args.timeout = timeout
+        return args
+
+    def _patch_instantiate(self, z):
+        return mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None))
+
+    def test_backup_creates_previous_when_no_previous_exists(self):
+        """Fresh deploy (no .previous): just `cp app.jar app.jar.previous`, no rotation."""
+        # ls returns empty + non-zero -> no previous exists
+        z = self._make_mock_z(ls_prev_code=1, ls_prev_out='')
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 0)
+
+        # Verify the backup cp command fired (with .previous, NOT .backup)
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        backup_prev_calls = [
+            c for c in run_calls
+            if 'app.jar' in c and 'cp' in c and 'app.jar.previous' in c and 'app.jar.backup' not in c
+        ]
+        self.assertGreaterEqual(
+            len(backup_prev_calls), 1,
+            msg=f'app.jar -> app.jar.previous backup must fire; got calls: {run_calls}',
+        )
+        # Verify NO rotation command fired (no .backup involved)
+        rotation_calls = [
+            c for c in run_calls if 'app.jar.previous' in c and 'app.jar.backup' in c
+        ]
+        self.assertEqual(
+            len(rotation_calls), 0,
+            msg=f'rotation to .backup must NOT fire when no .previous exists; got: {rotation_calls}',
+        )
+
+    def test_backup_rotates_previous_to_backup_when_previous_exists(self):
+        """When .previous already exists: rotate .previous -> .backup, then cp app.jar -> .previous."""
+        # ls returns content + code 0 -> .previous exists
+        z = self._make_mock_z(
+            ls_prev_code=0,
+            ls_prev_out='-rw-r--r-- 1 root root 71144400 Sep 10 12:00 /home/gravitational-wave-backend/app.jar.previous',
+        )
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 0)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        # Rotation must fire (previous -> backup)
+        rotation_calls = [
+            c for c in run_calls if 'app.jar.previous' in c and 'app.jar.backup' in c
+        ]
+        self.assertGreaterEqual(
+            len(rotation_calls), 1,
+            msg=f'rotation to .backup must fire when .previous exists; got: {run_calls}',
+        )
+        # Backup must ALSO fire (app.jar -> .previous)
+        backup_calls = [
+            c for c in run_calls
+            if 'app.jar' in c and 'cp' in c and 'app.jar.previous' in c and 'app.jar.backup' not in c
+        ]
+        self.assertGreaterEqual(
+            len(backup_calls), 1,
+            msg=f'app.jar -> .previous backup must fire after rotation; got: {run_calls}',
+        )
+
+    def test_backup_aborts_deploy_on_backup_failure(self):
+        """R6.82-A invariant: if backup cp fails, deploy MUST abort (return 1)."""
+        z = self._make_mock_z(
+            ls_prev_code=1,
+            ls_prev_out='',
+            # Override: backup cp returns failure
+            other_cmd_returns={
+                'app.jar': ('', 1),  # backup cp fails (and overlaps any subsequent cp)
+            },
+        )
+        # The above will make ALL app.jar cp commands fail. We want only the
+        # BACKUP cp to fail, not the subsequent SFTP-side docker cp. But the
+        # backup cp is the FIRST cp that targets app.jar.previous, so any cp
+        # targeting .previous fails. The deploy should abort at the backup
+        # step before docker cp fires.
+        with self._patch_instantiate(z):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 1)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        # No docker restart should fire (backup failure aborts deploy)
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart MUST NOT fire when backup fails; got: {restart_calls}',
+        )
+
+
+class TestCmdRollbackHappyPath(unittest.TestCase):
+    """R6.82: cmd_rollback full happy path sequence."""
+
+    def setUp(self):
+        # Patch TARGET_JAR so cmd_rollback doesn't error on missing TARGET_JAR
+        # (cmd_rollback doesn't actually use TARGET_JAR, but cmd_deploy tests
+        # have setUp for it; keep consistent for any test cross-pollination)
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', Path('dummy.jar'))
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def _make_mock_z(self, prev_sha='a' * 64):
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        prev_present_str = f'-rw-r--r-- 1 root root 71144400 Sep 10 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}'
+        captured_prev_sha = [None]
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (prev_present_str, 0)
+            if 'sha256sum' in cmd and 'app.jar.previous' in cmd:
+                captured_prev_sha[0] = prev_sha
+                return (f'{prev_sha}  /home/gravitational-wave-backend/app.jar.previous', 0)
+            if 'sha256sum' in cmd and 'app.jar' in cmd and 'previous' not in cmd:
+                # post-restore SHA check of app.jar
+                return (f'{prev_sha}  /home/gravitational-wave-backend/app.jar', 0)
+            if 'cp' in cmd and 'app.jar.previous' in cmd and 'app.jar.backup' not in cmd:
+                return ('', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+        return z
+
+    def test_rollback_restores_and_restarts_with_sha_match(self):
+        """Happy path: container running, .previous exists, SHAs match -> restart + UP."""
+        z = self._make_mock_z()
+        args = mock.MagicMock()
+        args.conf = True  # skip prompt
+        args.timeout = 4
+
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_rollback(args)
+        self.assertEqual(rc, 0)
+
+        # docker restart fired exactly once
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            len(restart_calls), 1,
+            msg=f'docker restart must fire exactly once on happy path; got {len(restart_calls)}',
+        )
+        # z.close() called
+        z.close.assert_called_once_with()
+
+
+class TestCmdRollbackNoPrevious(unittest.TestCase):
+    """R6.82: cmd_rollback MUST fail gracefully when no .previous exists."""
+
+    def setUp(self):
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', Path('dummy.jar'))
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def test_rollback_fails_when_no_previous_exists(self):
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                # ls returns no entry -> code 1 (file not found)
+                return ('', 1)
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        args = mock.MagicMock()
+        args.conf = True
+        args.timeout = 4
+
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_rollback(args)
+        self.assertEqual(rc, 1)
+
+        # No docker restart should fire
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart MUST NOT fire when no .previous exists; got: {restart_calls}',
+        )
+
+
+class TestCmdRollbackShaMismatch(unittest.TestCase):
+    """R6.82-C: cmd_rollback MUST verify SHA before restart (H1 invariant)."""
+
+    def setUp(self):
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', Path('dummy.jar'))
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def test_rollback_aborts_on_post_restore_sha_mismatch(self):
+        """If post-restore SHA != .previous SHA, rollback MUST abort before restart."""
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (f'-rw-r--r-- 1 root root 71144400 Sep 11 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}', 0)
+            if 'sha256sum' in cmd and 'app.jar.previous' in cmd:
+                # .previous SHA
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar.previous', 0)
+            if 'sha256sum' in cmd and 'app.jar' in cmd and 'previous' not in cmd:
+                # post-restore SHA of app.jar is WRONG (truncated cp simulation)
+                return (f'{"b" * 64}  /home/gravitational-wave-backend/app.jar', 0)
+            if 'cp' in cmd:
+                return ('', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        args = mock.MagicMock()
+        args.conf = True
+        args.timeout = 4
+
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_rollback(args)
+        self.assertEqual(rc, 1)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart MUST NOT fire on post-restore SHA mismatch; got: {restart_calls}',
+        )
+
+
+class TestCliRollbackRegistered(unittest.TestCase):
+    """R6.82: rollback subcommand visible in parent's --help output."""
+
+    def test_rollback_subcommand_in_help(self):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), '--help'],
+            capture_output=True, timeout=10,
+        )
+        out = (result.stdout or b'').decode('utf-8', errors='replace')
+        self.assertIn('rollback', out, msg='rollback subcommand missing from --help')
+
+    def test_rollback_help_describes_restart(self):
+        """The subparser's help text should mention the R6.82 restore behavior.
+
+        argparse shows subparser help text in the parent's --help output
+        (NOT in `rollback --help`, which only shows optional arguments).
+        """
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), '--help'],
+            capture_output=True, timeout=10,
+        )
+        out = (result.stdout or b'').decode('utf-8', errors='replace')
+        # The subparser help text is "R6.82: restore previous container jar + restart"
+        self.assertIn(
+            'R6.82: restore previous container jar + restart', out,
+            msg=f'rollback subparser help should describe restore + R6.82; got: {out[:400]}',
+        )
+
+
+
+
+# === R6.82 review-fix tests (security Q1/Q5/Q8 + deploy C1/C2/C3) ===
+
+# R6.82 review-fix tests (Deploy C2 + C3)
+# - test_backup_rotates_warn_but_succeeds_when_rotation_fails (C2a)
+# - test_rollback_aborts_when_restore_cp_fails (C2b)
+# - test_rollback_happy_path_asserts_call_sequence (C3)
+# Plus: security C1 size-check path test
+
+
+class TestDeployBackupReviewFixes(unittest.TestCase):
+    """R6.82 review fixes: rotation-fail-but-backup-succeeds + size-check."""
+
+    def setUp(self):
+        self.tmp = Path(os.environ.get('TEMP', '/tmp')) / 'badj_r682_fix_test'
+        self.tmp.mkdir(parents=True, exist_ok=True)
+        self.jar = self.tmp / 'start.jar'
+        _make_fake_jar(self.jar)
+        self.local_sha = _badj.sha256_file(self.jar)
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', self.jar)
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def _make_mock_z(self, size_check_returns=('OK\n', 0), rot_code=0, backup_code=0):
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+        z.sftp_put = mock.MagicMock()
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (f'-rw-r--r-- 1 root root 71144400 Sep 11 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}', 0)  # .previous exists
+            if 'app.jar.previous' in cmd and 'app.jar.backup' in cmd and 'cp ' in cmd:
+                return ('', rot_code)
+            if 'test -s' in cmd and 'app.jar.backup' in cmd:
+                return size_check_returns
+            if 'app.jar' in cmd and 'cp' in cmd and 'app.jar.previous' in cmd and 'app.jar.backup' not in cmd:
+                return ('', backup_code)
+            if 'sha256sum' in cmd and 'docker exec' not in cmd:
+                return (f'{self.local_sha}  /home/zjlab/gw-backend/start.jar\n', 0)
+            if 'docker exec' in cmd and 'sha256sum' in cmd:
+                return (f'{self.local_sha}  /home/gravitational-wave-backend/app.jar\n', 0)
+            if 'docker cp' in cmd:
+                return ('', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+        return z
+
+    def _make_args(self, conf=True):
+        args = mock.MagicMock()
+        args.conf = conf
+        args.timeout = 2
+        return args
+
+    def test_rotation_fail_but_backup_succeeds_continues_deploy(self):
+        """C2a: When rotation cp fails, deploy MUST continue (best-effort) but
+        size-check MUST be skipped (since .backup wasn't written). Backup cp
+        of current app.jar -> .previous must still proceed and deploy succeeds.
+        """
+        z = self._make_mock_z(rot_code=1)
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        # Rotation failed -> [WARN] + continue, backup succeeds -> deploy proceeds
+        self.assertEqual(rc, 0)
+
+    def test_size_check_aborts_deploy_when_rotation_truncated(self):
+        """C1: rotation cp returned 0 but test -s says file is empty -> deploy MUST abort."""
+        z = self._make_mock_z(rot_code=0, size_check_returns=('EMPTY\n', 0))
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 1)
+
+    def test_backup_failure_surfaces_backup_recovery_hint(self):
+        """Security Q5: when backup cp fails, message MUST mention .backup recovery path."""
+        # No previous -> no rotation. Backup cp fails.
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+        z.sftp_put = mock.MagicMock()
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return ('', 1)  # no previous -> skip rotation
+            if 'app.jar' in cmd and 'cp' in cmd and 'app.jar.previous' in cmd and 'app.jar.backup' not in cmd:
+                return ('', 1)  # backup cp fails
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        captured = io.StringIO()
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('sys.stdout', new=captured):
+                    with mock.patch('sys.stderr', new=captured):
+                        rc = _badj.cmd_deploy(self._make_args())
+        self.assertEqual(rc, 1)
+        output = captured.getvalue()
+        self.assertIn('.backup', output, msg=f'.backup recovery hint missing from output: {output[:500]}')
+        self.assertIn('Manual recovery', output, msg=f'Manual recovery line missing: {output[:500]}')
+
+
+class TestCmdRollbackReviewFixes(unittest.TestCase):
+    """R6.82 review fixes: rollback-cp-fails + call sequence assertions."""
+
+    def setUp(self):
+        self._target_patch = mock.patch.object(_badj, 'TARGET_JAR', Path('dummy.jar'))
+        self._target_patch.start()
+
+    def tearDown(self):
+        self._target_patch.stop()
+
+    def test_rollback_aborts_when_restore_cp_fails(self):
+        """C2b: When cp .previous -> app.jar returns non-zero exit, cmd_rollback
+        MUST abort BEFORE SHA check and BEFORE docker restart.
+        """
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (f'-rw-r--r-- 1 root root 71144400 Sep 11 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}', 0)
+            if 'sha256sum' in cmd and 'app.jar.previous' in cmd:
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar.previous', 0)
+            if 'cp' in cmd and 'app.jar.previous' in cmd and 'app.jar.backup' not in cmd:
+                return ('', 1)  # restore cp fails
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        args = mock.MagicMock()
+        args.conf = True
+        args.timeout = 4
+
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_rollback(args)
+        self.assertEqual(rc, 1)
+
+        run_calls = [c.args[0] for c in z.run.call_args_list if c.args]
+        restart_calls = [c for c in run_calls if 'docker restart' in c]
+        self.assertEqual(
+            restart_calls, [],
+            msg=f'docker restart MUST NOT fire when restore cp fails; got: {restart_calls}',
+        )
+
+    def test_rollback_happy_path_asserts_call_sequence(self):
+        """C3: Happy path MUST follow strict sequence: SHA capture -> cp -> SHA verify -> restart."""
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        run_cmds = []
+
+        def run(cmd, timeout=60):
+            run_cmds.append(cmd)
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (f'-rw-r--r-- 1 root root 71144400 Sep 11 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}', 0)
+            if 'sha256sum' in cmd and 'app.jar.previous' in cmd:
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar.previous', 0)
+            if 'cp' in cmd and 'app.jar.previous' in cmd and 'app.jar.backup' not in cmd:
+                return ('', 0)
+            if 'sha256sum' in cmd and 'app.jar' in cmd and 'previous' not in cmd:
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        args = mock.MagicMock()
+        args.conf = True
+        args.timeout = 4
+
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('builtins.print'):
+                    rc = _badj.cmd_rollback(args)
+        self.assertEqual(rc, 0)
+
+        # Find indices of each step's command
+        idx_prev_sha = next(
+            i for i, c in enumerate(run_cmds)
+            if 'sha256sum' in c and 'app.jar.previous' in c
+        )
+        idx_restore_cp = next(
+            i for i, c in enumerate(run_cmds)
+            if 'cp' in c and 'app.jar.previous' in c and 'app.jar.backup' not in c
+        )
+        idx_app_sha = next(
+            i for i, c in enumerate(run_cmds)
+            if 'sha256sum' in c and 'app.jar' in c and 'previous' not in c
+        )
+        idx_restart = next(i for i, c in enumerate(run_cmds) if 'docker restart' in c)
+
+        # Strict order: prev_sha < restore_cp < app_sha < restart
+        self.assertLess(
+            idx_prev_sha, idx_restore_cp,
+            msg=f'sha256sum(.previous) MUST fire before cp: prev_sha={idx_prev_sha}, cp={idx_restore_cp}',
+        )
+        self.assertLess(
+            idx_restore_cp, idx_app_sha,
+            msg=f'cp MUST fire before sha256sum(app.jar): cp={idx_restore_cp}, app_sha={idx_app_sha}',
+        )
+        self.assertLess(
+            idx_app_sha, idx_restart,
+            msg=f'sha256sum(app.jar) MUST fire before docker restart: app_sha={idx_app_sha}, restart={idx_restart}',
+        )
+
+    def test_rollback_conf_true_emits_audit_print(self):
+        """Security Q1: args.conf=True MUST emit `[AUDIT] rollback invoked with --conf` print."""
+        z = mock.MagicMock(name='z')
+        z.docker_ps.return_value = [{'name': 'divs-backend', 'status': 'Up 2 hours'}]
+
+        def run(cmd, timeout=60):
+            if 'ls -la' in cmd and 'app.jar.previous' in cmd:
+                return (f'-rw-r--r-- 1 root root 71144400 Sep 11 12:00 {_badj.CONTAINER_PREVIOUS_JAR_PATH}', 0)
+            if 'sha256sum' in cmd and 'app.jar.previous' in cmd:
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar.previous', 0)
+            if 'cp' in cmd:
+                return ('', 0)
+            if 'sha256sum' in cmd and 'app.jar' in cmd and 'previous' not in cmd:
+                return (f'{"a" * 64}  /home/gravitational-wave-backend/app.jar', 0)
+            if 'docker restart' in cmd:
+                return ('divs-backend\n', 0)
+            if 'docker exec' in cmd and 'curl' in cmd:
+                return ('{"code":0,"message":"success","data":{"status":"UP"}}', 0)
+            return ('', 0)
+
+        z.run.side_effect = run
+
+        args = mock.MagicMock()
+        args.conf = True
+        args.timeout = 4
+
+        captured = io.StringIO()
+        with mock.patch.object(_badj, '_instantiate_zkb', return_value=(z, None)):
+            with mock.patch('builtins.input', side_effect=AssertionError('must not prompt')):
+                with mock.patch('sys.stdout', new=captured):
+                    with mock.patch('sys.stderr', new=captured):
+                        _badj.cmd_rollback(args)
+        output = captured.getvalue()
+        self.assertIn(
+            '[AUDIT] rollback invoked with --conf', output,
+            msg=f'--conf audit print missing: {output[:500]}',
+        )
+        self.assertIn(
+            'AUDIT: rollback complete', output,
+            msg=f'final AUDIT summary line missing: {output[:500]}',
+        )
+
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""build-and-deploy-jar.py — R6.81a unified gw-backend jar build + deploy wrapper.
+"""build-and-deploy-jar.py — R6.81a + R6.82: gw-backend jar build + deploy + rollback wrapper.
 
 Why this exists:
   R6.80 (commit d43fd4e) shipped 3 deliverables (#4 zsmoke api-health, #5 MongoConfig,
@@ -25,6 +25,7 @@ USAGE:
   python build-and-deploy-jar.py build     # Phase A: mvn -pl start -am clean package
   python build-and-deploy-jar.py deploy    # Phase B: SFTP + docker cp + restart + wait
   python build-and-deploy-jar.py verify    # quick /api/health probe
+  python build-and-deploy-jar.py rollback  # R6.82: restore app.jar.previous -> app.jar + SHA verify + restart
   python build-and-deploy-jar.py all       # build + deploy + verify (USER prompts)
 
 PREREQUISITES:
@@ -99,6 +100,10 @@ REMOTE_BACKEND_DIR = '/home/zjlab/gw-backend'
 REMOTE_JAR_HOST = f'{REMOTE_BACKEND_DIR}/start.jar'
 REMOTE_CONTAINER = 'divs-backend'
 CONTAINER_JAR_PATH = '/home/gravitational-wave-backend/app.jar'
+# R6.82: rollback support. PREVIOUS = last deploy's app.jar (one-step undo).
+# BACKUP = the previous-previous (rotated out when a new deploy makes a new PREVIOUS).
+CONTAINER_PREVIOUS_JAR_PATH = '/home/gravitational-wave-backend/app.jar.previous'
+CONTAINER_BACKUP_JAR_PATH = '/home/gravitational-wave-backend/app.jar.backup'
 
 # === Backend port (R6.81a M1 deploy-review fix: single source of truth) ===
 BACKEND_PORT = 8093
@@ -455,6 +460,9 @@ def cmd_deploy(args):
       - C1: zkb instantiated with sync_script_path fallback for Windows dev
       - H1: SHA verified after docker cp (host SHA + container SHA)
       - H2: default wait timeout 120s (was 60s)
+      - R6.82-A: cmd_deploy MUST rotate app.jar -> app.jar.previous before docker cp
+      - R6.82-B: cmd_rollback requires --conf OR interactive "yes" prompt
+      - R6.82-C: cmd_rollback MUST verify SHA inside container before docker restart
     """
     print('=== R6.81a Phase B: deploy + restart + wait-for-UP ===')
     if not TARGET_JAR.exists():
@@ -484,6 +492,50 @@ def cmd_deploy(args):
             return 1
         for c in containers:
             print(f'  - {c["name"]}  {c["status"]}')
+
+        # 1.5 R6.82-A backup: rotate container app.jar -> app.jar.previous
+        # (and previous -> backup if previous already exists) BEFORE docker cp.
+        # This guarantees that a fresh `rollback` subcommand can restore the
+        # current running jar. Without this, a bad deploy would be unrecoverable
+        # without manual SFTP+docker cp.
+        print('[backup] Rotating container app.jar -> app.jar.previous (R6.82-A)')
+        # Check if a previous jar already exists; if so, rotate to .backup first
+        prev_check_out, prev_check_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} sh -c "ls -la {CONTAINER_PREVIOUS_JAR_PATH} 2>/dev/null"',
+            timeout=10,
+        )
+        if prev_check_code == 0 and CONTAINER_PREVIOUS_JAR_PATH in prev_check_out:
+            print('  previous jar exists, rotating -> .backup')
+            rot_out, rot_code = z.run(
+                f'docker exec {REMOTE_CONTAINER} cp {CONTAINER_PREVIOUS_JAR_PATH} {CONTAINER_BACKUP_JAR_PATH}',
+                timeout=60,
+            )
+            if rot_code != 0:
+                print(f'  [WARN] previous->backup rotation failed (code={rot_code}): {rot_out}')
+                print(f'  Continuing deploy anyway (backup is best-effort, .previous still writable).')
+            else:
+                print(f'  [OK] rotated -> {CONTAINER_BACKUP_JAR_PATH}')
+                # Deploy C1: verify rotation produced non-empty .backup (defends
+                # against partial cp that returned 0 but truncated the file).
+                size_out, size_code = z.run(
+                    f'docker exec {REMOTE_CONTAINER} sh -c "test -s {CONTAINER_BACKUP_JAR_PATH} && echo OK || echo EMPTY"',
+                    timeout=10,
+                )
+                if size_code != 0 or 'OK' not in size_out:
+                    print(f'  [FAIL] post-rotation .backup is empty/truncated: {size_out}')
+                    return 1
+        # Now back up the CURRENT app.jar to .previous
+        backup_out, backup_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} cp {CONTAINER_JAR_PATH} {CONTAINER_PREVIOUS_JAR_PATH}',
+            timeout=60,
+        )
+        if backup_code != 0:
+            print(f'  [FAIL] container backup failed (code={backup_code}): {backup_out}')
+            # Security Q5: surface .backup as manual recovery option
+            print(f'  .backup retains the previous-previous jar: docker exec {REMOTE_CONTAINER} ls -la {CONTAINER_BACKUP_JAR_PATH}')
+            print(f'  Manual recovery: docker exec {REMOTE_CONTAINER} cp {CONTAINER_BACKUP_JAR_PATH} {CONTAINER_JAR_PATH}')
+            return 1
+        print(f'  [OK] backup -> {CONTAINER_PREVIOUS_JAR_PATH}')
 
         # 2. SFTP upload to host
         print(f'[upload] SFTP {TARGET_JAR.name} -> {REMOTE_JAR_HOST}')
@@ -580,6 +632,155 @@ def cmd_deploy(args):
         z.close()
 
 
+def cmd_rollback(args):
+    """R6.82: restore previous app.jar in container + restart.
+
+    Iron rules:
+      - R6.82-B: requires --yes OR interactive prompt (per [[r678-classifier-boundary]])
+      - R6.82-C: SHA verify inside container before docker restart (H1 invariant)
+
+    Sequence:
+      1. Pre-flight: container running + .previous exists
+      2. SHA verify inside container of .previous (capture)
+      3. docker exec ... cp .previous app.jar
+      4. SHA verify inside container of app.jar (must match capture)
+      5. Interactive prompt (or --yes): restart with restored jar
+      6. docker restart divs-backend
+      7. Wait for /api/health = UP (H2 default 120s)
+    """
+    # Security Q8: timestamped audit prefix on every rollback print (post-mortem)
+    from datetime import datetime
+    _ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    print(f'=== R6.82 rollback @ {_ts}: restore previous app.jar + restart ===')
+    z, err = _instantiate_zkb()
+    if err:
+        print(f'ERROR: {err}')
+        return 1
+    try:
+        # 1. Pre-flight
+        print('[pre-flight] Checking divs-backend container...')
+        containers = z.docker_ps(name_filter='divs-backend')
+        if not containers:
+            print('  [ERROR] divs-backend container not running on zjlab.')
+            return 1
+        for c in containers:
+            print(f'  - {c["name"]}  {c["status"]}')
+
+        # 2. Verify .previous exists
+        prev_out, prev_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} sh -c "ls -la {CONTAINER_PREVIOUS_JAR_PATH} 2>/dev/null"',
+            timeout=10,
+        )
+        if prev_code != 0 or CONTAINER_PREVIOUS_JAR_PATH not in prev_out:
+            print(f'  [ERROR] No previous jar to roll back to: {CONTAINER_PREVIOUS_JAR_PATH}')
+            print('  Either this is the first deploy, or .previous was rotated to .backup.')
+            print(f'  Check: docker exec {REMOTE_CONTAINER} ls -la {CONTAINER_BACKUP_JAR_PATH}')
+            return 1
+        print(f'  [OK] {CONTAINER_PREVIOUS_JAR_PATH} present')
+
+        # 3. SHA verify .previous (capture)
+        prev_sha_raw, prev_sha_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} sha256sum {CONTAINER_PREVIOUS_JAR_PATH}',
+            timeout=15,
+        )
+        if prev_sha_code != 0:
+            print(f'  [FAIL] sha256sum .previous exit={prev_sha_code}: {prev_sha_raw}')
+            return 1
+        prev_sha = prev_sha_raw.strip().split()[0]
+        print(f'  .previous sha256: {prev_sha[:16]}...')
+
+        # 4. Restore .previous -> app.jar
+        print(f'[restore] docker exec ... cp {CONTAINER_PREVIOUS_JAR_PATH} {CONTAINER_JAR_PATH}')
+        cp_out, cp_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} cp {CONTAINER_PREVIOUS_JAR_PATH} {CONTAINER_JAR_PATH}',
+            timeout=60,
+        )
+        if cp_code != 0:
+            print(f'  [FAIL] restore cp exit={cp_code}: {cp_out}')
+            return 1
+        print(f'  [OK] restored')
+
+        # 5. SHA verify app.jar (must match .previous)
+        app_sha_raw, app_sha_code = z.run(
+            f'docker exec {REMOTE_CONTAINER} sha256sum {CONTAINER_JAR_PATH}',
+            timeout=15,
+        )
+        if app_sha_code != 0:
+            print(f'  [FAIL] sha256sum app.jar exit={app_sha_code}: {app_sha_raw}')
+            return 1
+        app_sha = app_sha_raw.strip().split()[0]
+        if app_sha != prev_sha:
+            print(f'  [FAIL] post-restore SHA mismatch: previous={prev_sha[:16]} app.jar={app_sha[:16]}')
+            print('         Likely partial/truncated cp. Aborting before restart.')
+            return 1
+        print(f'  [OK] app.jar sha256 verified: {app_sha[:16]}...')
+
+        # 6. Interactive prompt (unless --conf)
+        # Security Q1: --conf is process-trust only (matches cmd_deploy pattern);
+        # audit-print so post-mortems can distinguish prompted vs. unprompted
+        if args.conf:
+            print('  [AUDIT] rollback invoked with --conf (USER authorization assumed)')
+        if not args.conf:
+            print()
+            print('About to restart divs-backend with rolled-back jar (5-10s downtime).')
+            print('Per [[r678-classifier-boundary]], USER must explicitly authorize this.')
+            ans = input('Type "yes" to restart, anything else to skip restart: ').strip()
+            if ans != 'yes':
+                print('Cancelled. Jar restored to container but NOT yet activated.')
+                print('Activate manually with: docker restart divs-backend')
+                return 2  # R6.81a M3 pattern: 2 (not 130)
+
+        # 7. Restart
+        print(f'[restart] docker restart {REMOTE_CONTAINER}')
+        out, code = z.run(f'docker restart {REMOTE_CONTAINER}', timeout=60)
+        if code != 0:
+            print(f'  [FAIL] docker restart exit={code}: {out}')
+            return code
+        print(f'  [OK] {out.strip() or "restarted"}')
+
+        # 8. Wait for /api/health = UP (H2 default 120s)
+        timeout_s = args.timeout
+        print(f'[wait] polling /api/health (max {timeout_s}s)...')
+        start = time.time()
+        health_url = f'http://localhost:{BACKEND_PORT}/api/health'
+        last_status = None
+        while time.time() - start < timeout_s:
+            elapsed = time.time() - start
+            out, code = z.run(
+                f'docker exec {REMOTE_CONTAINER} curl -sf -m 5 {health_url}',
+                timeout=15,
+            )
+            if code == 0 and out.strip():
+                if '"status":"UP"' in out:
+                    print(f'  [OK] /api/health = UP after {elapsed:.1f}s')
+                    print(f'    body: {out.strip()[:300]}')
+                    print()
+                    print('Rollback complete. Note: app.jar.backup is the previous-previous jar if needed.')
+                    # Security Q8: final structured audit summary line
+                    print(f'=== AUDIT: rollback complete @ {_ts}, restart={elapsed:.1f}s, health=UP ===')
+                    return 0
+                last_status = out.strip()[:200]
+                print(f'  ... {elapsed:.1f}s status not UP: {last_status}')
+            else:
+                print(f'  ... {elapsed:.1f}s curl exit={code} (container still starting)')
+            time.sleep(2)
+
+        print()
+        print(f'[FAIL] /api/health did not return UP within {timeout_s}s')
+        print(f'  last status: {last_status}')
+        print()
+        print('Diagnose:')
+        print(f'  docker logs {REMOTE_CONTAINER} --tail 100')
+        print(f'  docker exec {REMOTE_CONTAINER} curl -v http://localhost:{BACKEND_PORT}/actuator/health')
+        # Security Q8: surface multi-deploy limitation
+        print()
+        print('Note: .previous still holds the OLD jar. A subsequent deploy will rotate')
+        print('  .previous -> .backup, losing the one-before-current history.')
+        return 1
+    finally:
+        z.close()
+
+
 def cmd_verify(args):
     """Quick verify: /api/health (R6.80) + /actuator/health (R6.97 #2) + /v3/api-docs."""
     print('=== R6.81a verify: health endpoints ===')
@@ -664,7 +865,7 @@ def cmd_all(args):
 
 def main():
     p = argparse.ArgumentParser(
-        description='R6.81a: gw-backend start.jar build + deploy (forces -am)',
+        description='R6.81a+R6.82: gw-backend start.jar build, deploy, and rollback',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -686,6 +887,13 @@ def main():
     sp.add_argument('--timeout', type=int, default=DEFAULT_WAIT_TIMEOUT,
                     help=f'Wait-for-UP timeout in seconds (default {DEFAULT_WAIT_TIMEOUT})')
     sp.set_defaults(func=cmd_deploy)
+
+    sp = sub.add_parser('rollback', help='R6.82: restore previous container jar + restart')
+    sp.add_argument('--conf', action='store_true',
+                    help='Skip USER restart confirmation (only with explicit auth)')
+    sp.add_argument('--timeout', type=int, default=DEFAULT_WAIT_TIMEOUT,
+                    help=f'Wait-for-UP timeout in seconds (default {DEFAULT_WAIT_TIMEOUT})')
+    sp.set_defaults(func=cmd_rollback)
 
     sp = sub.add_parser('verify', help='Quick /api/health + /actuator/health + /v3/api-docs')
     sp.set_defaults(func=cmd_verify)
