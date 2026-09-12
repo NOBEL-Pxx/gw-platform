@@ -26,6 +26,11 @@ interface AladinProps {
   // mutation via useContrastDOM in R6.27i for ms-level response. Kept as
   // fallback for callers that don't use the hook.
   filter?: string
+  // R6.99-A: when true, image uses loading="eager" + decoding="sync" +
+  // fetchPriority="high" — for the currently-active big image so first
+  // paint of the viewer's central tile is snappy. Default false for the
+  // thumb strip where lazy decode is fine (browsers handle scroll-into-view).
+  eager?: boolean
 }
 
 // R6.67.4: minimal local ErrorBoundary, co-located to avoid the
@@ -67,6 +72,7 @@ export default function Aladin({
   alt,
   imgRef,
   filter,
+  eager = false,
 }: AladinProps): JSX.Element {
   return (
     <LocalErrorBoundary>
@@ -85,16 +91,17 @@ export default function Aladin({
             // a fallback when the hook isn't wired (legacy callers).
             style={{ objectFit: 'contain', filter: filter || undefined }}
             draggable={false}
-            loading='eager'
-            // R6.27i.e: ms-level band-switch response.
-            // - decoding="sync": forces synchronous decode, eliminating the
-            //   async flicker (old image -> blank -> new image). For cached
-            //   400px JPEGs, sync decode is ~20-30ms - acceptable trade-off
-            //   for no flicker.
-            // - fetchpriority="high": browser prioritizes this image's
-            //   network/decode work over lower-priority images on the page.
-            decoding='sync'
-            fetchPriority='high'
+            // R6.99-A: lazy by default; only the active big image is eager.
+            // Active = parent passes eager={true} (see MultiBandDataPanel).
+            // Lazy decode lets browser prioritize the active image without
+            // fighting for bandwidth on first paint.
+            loading={eager ? 'eager' : 'lazy'}
+            // R6.99-A: sync decode only when eager (cached 400px JPEGs
+            // are ~20-30ms — acceptable for anti-flicker on the active
+            // big image). Async decode otherwise (no flicker on thumbs
+            // because they fade in via useContrastDOM filter writes).
+            decoding={eager ? 'sync' : 'async'}
+            fetchPriority={eager ? 'high' : 'auto'}
           />
         ) : (
           <div className='text-white/40 text-sm'>Select a band to view</div>

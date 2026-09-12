@@ -1,10 +1,11 @@
+// R6.99-A: useBreakpoint + responsive THUMB_SIZE; gated Firefly mount.
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRequest } from 'ahooks'
 import { getGravitationalWave } from '@/service'
 import Aladin from './Aladin1'
 import FireflyViewer from './FireflyViewer'
-import { Segmented } from 'antd'
+import { Grid, Segmented } from 'antd'
 import { getFitsUrl, getImageUrl } from '@/util/url'
 import { preloadImages, preloadFits } from '@/util/preload'
 import PreloadSplash from '@/components/PreloadSplash'
@@ -90,8 +91,12 @@ function largeImageUrl(e: OrderedEntry, ra?: number, dec?: number): string {
 
 // thumbUrl: thumbnail URL builder for preload (mirror MultiBandDataPanel's
 // thumbUrl). Used to enumerate all URLs to preload when entries change.
-const THUMB_SIZE = 120
-function thumbUrl(e: OrderedEntry, ra?: number, dec?: number): string {
+function thumbUrl(
+  e: OrderedEntry,
+  ra?: number,
+  dec?: number,
+  size: number = 120,
+): string {
   if (e.kind === 'rgb') {
     if (e.hipsColor && ra !== undefined && dec !== undefined) {
       const stretch = HIPS_STRETCH[e.survey] || 'asinh'
@@ -111,7 +116,7 @@ function thumbUrl(e: OrderedEntry, ra?: number, dec?: number): string {
   const fp = e.item.fits_path || e.item.fits_db_path || ''
   const fn = fp.replace('/static-files/fits/', '')
   return fn
-    ? `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${THUMB_SIZE}`
+    ? `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${size}`
     : ''
 }
 
@@ -128,12 +133,16 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
 
   const [viewerType, setViewerType] = useState<ViewerType>('aladin')
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
-  const [fireflyPreloaded, setFireflyPreloaded] = useState(false)
+  // R6.99-A: Firefly lazy mount — set true on first user click of
+  // Firefly tab. Reverts R6.19 always-mount which caused WASM init
+  // jank on every observation change.
+  const [fireflyMounted, setFireflyMounted] = useState(false)
+  // R6.99-A: responsive breakpoints
+  const bp = Grid.useBreakpoint()
+  const thumbSize = bp.xs ? 90 : bp.md ? 110 : 120
   // R6.9b: track tiles whose thumbnail failed to load. Filtered from strip
   // so user sees only tiles with valid data.
   const [brokenTiles, setBrokenTiles] = useState<Set<number>>(() => new Set())
-  const preloadTimerRef = useRef<ReturnType<typeof setTimeout>>()
-
   // R6.18 (mirrored from MultiBandDataPanel): preload thumbnails + big images
   // + FITS files into browser cache while the "Preparing observation…" splash
   // is showing. After preload completes, all tile/big-image/Firefly switches
@@ -151,22 +160,16 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
 
   useEffect(() => {
     setViewerType('aladin')
-    setFireflyPreloaded(false)
+    setFireflyMounted(false)
     setSelectedIndexes([0])
     setSelectedRgbIndex(null)
     setBrokenTiles(new Set())
   }, [ra, dec])
 
-  const handleViewerChange = useCallback(
-    (val: ViewerType) => {
-      setViewerType(val)
-      if (val === 'firefly' && !fireflyPreloaded) {
-        if (preloadTimerRef.current) clearTimeout(preloadTimerRef.current)
-        setFireflyPreloaded(true)
-      }
-    },
-    [fireflyPreloaded],
-  )
+  const handleViewerChange = useCallback((val: ViewerType) => {
+    setViewerType(val)
+    if (val === 'firefly') setFireflyMounted(true)
+  }, [])
 
   // v4.51: Single touch-zone fullscreen toggle — same zone enters/exits
   const toggleFullscreen = useCallback(() => {
@@ -193,16 +196,9 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
     [selectedIndexes, entries],
   )
 
-  useEffect(() => {
-    if (fits.length > 0 && !fireflyPreloaded) {
-      preloadTimerRef.current = setTimeout(() => {
-        setFireflyPreloaded(true)
-      }, 1500)
-    }
-    return () => {
-      if (preloadTimerRef.current) clearTimeout(preloadTimerRef.current)
-    }
-  }, [fits, fireflyPreloaded])
+  // R6.99-A: removed R6.9b auto-firefly-preload effect. Firefly mounts
+  // lazily on user click (see handleViewerChange). Avoids WASM init
+  // on every observation change.
 
   // R6.18 preload (mirrored from MultiBandDataPanel).
   useEffect(() => {
@@ -214,7 +210,7 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
     setPreloadDone(false)
     const myId = ++preloadIdRef.current
 
-    const thumbUrls = entries.map((e) => thumbUrl(e, ra, dec))
+    const thumbUrls = entries.map((e) => thumbUrl(e, ra, dec, thumbSize))
     const bigUrls = entries.map((e) => largeImageUrl(e, ra, dec))
     const fitsUrls = entries
       .filter((e) => e.kind === 'band')
@@ -243,7 +239,7 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
     ]).then(() => {
       if (preloadIdRef.current === myId) setPreloadDone(true)
     })
-  }, [ra, dec, entries])
+  }, [ra, dec, entries, thumbSize])
 
   // R6.13: compute the big-viewer image URL the same way as the thumbnail.
   // Source priority (matches the panel helper):
@@ -340,7 +336,7 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
           pointerEvents: viewerType === 'firefly' ? 'auto' : 'none',
         }}
       >
-        <FireflyViewer fits={fits} />
+        <FireflyViewer fits={fits} mount={fireflyMounted} />
       </div>
     </>
   )
@@ -399,7 +395,13 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
       ) : (
         <div
           className='flex-1 min-h-0 overflow-hidden'
-          style={{ position: 'relative', minHeight: 420, zIndex: 1 }}
+          // R6.99-A: viewport-aware minHeight. Compact viewports get
+          // shorter viewer so thumb strip + title don't overflow.
+          style={{
+            position: 'relative',
+            minHeight: bp.xs ? 280 : bp.sm ? 340 : 420,
+            zIndex: 1,
+          }}
         >
           {hasViewerContent && (
             <div
@@ -465,9 +467,10 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
               >
                 <div
                   style={{
+                    // R6.99-A: thumb size from useBreakpoint (90/110/120)
                     position: 'relative',
-                    width: 100,
-                    height: 100,
+                    width: thumbSize,
+                    height: thumbSize,
                     aspectRatio: '1 / 1',
                     borderRadius: 8,
                     overflow: 'hidden',
@@ -551,7 +554,7 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
                                 hips,
                                 ra!,
                                 dec!,
-                                120,
+                                thumbSize,
                                 stretch,
                               )
                             }
@@ -563,7 +566,7 @@ export default function ImageList({ ra, dec }: { ra: number; dec: number }) {
                               ''
                             const fn = fp.replace('/static-files/fits/', '')
                             return fn
-                              ? `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=120`
+                              ? `/pipeline/thumbnail?filename=${encodeURIComponent(fn)}&size=${thumbSize}`
                               : ''
                           })()
                         : entry.url

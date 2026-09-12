@@ -59,6 +59,11 @@ const STRETCH_OPTIONS = ['Linear', 'Log', 'Sqrt', 'Asinh'] as const
 interface FireflyViewerProps {
   fits?: string[]
   hipsSurvey?: string
+  // R6.99-A: gates iframe mounting. Parent (MultiBandDataPanel /
+  // ImageList) passes mount=true on first user click of Firefly tab.
+  // Reverts R6.19 always-mount to eliminate WASM + WebGL init jank
+  // on first paint of MultiBandDataPanel / ImageList.
+  mount?: boolean
 }
 
 function has2MASS(fits?: string[]): boolean {
@@ -68,6 +73,7 @@ function has2MASS(fits?: string[]): boolean {
 export default function FireflyViewer({
   fits,
   hipsSurvey,
+  mount = false,
 }: FireflyViewerProps): JSX.Element {
   const [colorTable, setColorTable] = useState<number>(16)
   const [stretch, setStretch] = useState<string>('Log')
@@ -352,7 +358,7 @@ export default function FireflyViewer({
 
         {/* Viewer */}
         <div className='flex-1 relative'>
-          {hasData && initialSrc ? (
+          {hasData && initialSrc && mount ? (
             <iframe
               key={iframeKey}
               src={initialSrc}
@@ -362,6 +368,36 @@ export default function FireflyViewer({
               title='Firefly FITS Viewer'
               allow='fullscreen'
             />
+          ) : !mount ? (
+            // R6.99-A: lazy-mount placeholder. Shown until parent sets
+            // mount=true on first Firefly tab click. Avoids 4-5s WASM
+            // init on first paint of MultiBandDataPanel / ImageList.
+            <div
+              className='absolute inset-0 flex items-center justify-center'
+              style={{
+                background: 'rgba(10,15,36,0.80)',
+                color: 'rgba(255,255,255,0.40)',
+              }}
+            >
+              <div className='text-center'>
+                <div
+                  style={{
+                    fontSize: 48,
+                    color: 'rgba(255,255,255,0.10)',
+                    marginBottom: 12,
+                  }}
+                >
+                  <ReloadOutlined spin />
+                </div>
+                <p>Firefly viewer (lazy mount)</p>
+                <p
+                  className='text-xs mt-1'
+                  style={{ color: 'rgba(255,255,255,0.20)' }}
+                >
+                  Firefly v4.32 — first click triggers ~5s WASM init
+                </p>
+              </div>
+            </div>
           ) : (
             <div
               className='absolute inset-0 flex items-center justify-center'

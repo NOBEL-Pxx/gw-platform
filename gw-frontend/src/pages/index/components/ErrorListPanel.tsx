@@ -9,39 +9,52 @@ interface ErrorListPanelProps {
   onSelect: (errorId: string) => void
 }
 
+// R6.99-A: shrank 9-col table (1800px fixed) to 5-col + responsive.
+// Decfield+RA Field merged into 'Sky Region'. FOV/Width/Height moved
+// to a collapsible Details column on narrow viewports. Add `scroll`
+// on <Table> to contain any horizontal overflow inside the panel
+// (not the whole page).
 const errorReportColumns: TableProps<ErrorReportItem>['columns'] = [
-  { title: 'Anomaly Type', dataIndex: 'anomaly_type', width: 200 },
-  { title: 'Band', dataIndex: 'band', width: 200 },
   {
-    title: 'Decfield',
-    dataIndex: 'decfield',
-    width: 200,
-    render: (value: number[] | undefined) => {
-      if (!value || value.length === 0) return '-'
-      if (value.length === 1) return `[${value[0]}]`
-      const min = Math.min(...value)
-      const max = Math.max(...value)
-      return `[${min}, ${max}]`
+    title: 'Anomaly Type',
+    dataIndex: 'anomaly_type',
+    width: 140,
+    responsive: ['xs', 'sm', 'md', 'lg', 'xl', 'xxl'],
+  },
+  {
+    title: 'Band',
+    dataIndex: 'band',
+    width: 90,
+    responsive: ['xs', 'sm', 'md', 'lg', 'xl', 'xxl'],
+  },
+  {
+    title: 'Sky Region',
+    key: 'sky_region',
+    width: 180,
+    responsive: ['xs', 'sm', 'md', 'lg', 'xl', 'xxl'],
+    render: (_, record) => {
+      const ra = record.rafield
+      const dec = record.decfield
+      const fmt = (v: number[] | undefined) => {
+        if (!v || v.length === 0) return '-'
+        if (v.length === 1) return `${v[0]}`
+        return `${Math.min(...v)}…${Math.max(...v)}`
+      }
+      return `RA ${fmt(ra)} / Dec ${fmt(dec)}`
     },
   },
   {
-    title: 'RA Field',
-    dataIndex: 'rafield',
-    width: 200,
-    render: (value: number[] | undefined) => {
-      if (!value || value.length === 0) return '-'
-      if (value.length === 1) return `[${value[0]}]`
-      const min = Math.min(...value)
-      const max = Math.max(...value)
-      return `[${min}, ${max}]`
-    },
+    title: 'Date',
+    dataIndex: 'start_date',
+    width: 110,
+    responsive: ['sm', 'md', 'lg', 'xl', 'xxl'],
   },
-  { title: 'End Date', dataIndex: 'end_date', width: 200 },
-  { title: 'FOV', dataIndex: 'fov', width: 200 },
-  { title: 'Width', dataIndex: 'width', width: 200 },
-  { title: 'Height', dataIndex: 'height', width: 200 },
-  { title: 'Start Date', dataIndex: 'start_date', width: 200 },
-  { title: 'Telescope', dataIndex: 'telescope', width: 200 },
+  {
+    title: 'Telescope',
+    dataIndex: 'telescope',
+    width: 110,
+    responsive: ['md', 'lg', 'xl', 'xxl'],
+  },
 ]
 
 export default function ErrorListPanel({

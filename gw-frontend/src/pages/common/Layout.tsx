@@ -366,7 +366,11 @@ export default function LayoutWrapper() {
       </div>
 
       {/* Content */}
-      <div className='flex-1 overflow-auto relative z-10'>
+      {/* R6.99-A: added `min-w-0` so antd Splitter inside doesn't overflow
+          horizontally on narrow viewports. Without min-w-0, the flex item
+          enforces intrinsic min-content width which forces horizontal
+          page scroll on screens < 1024px wide. */}
+      <div className='flex-1 min-w-0 overflow-auto relative z-10'>
         <div className='animate-fade-in'>
           <ErrorBoundary>
             <Outlet />

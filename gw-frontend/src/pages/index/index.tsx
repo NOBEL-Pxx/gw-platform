@@ -1,5 +1,9 @@
+// R6.99-A: useBreakpoint drives Splitter vs stacked-Tabs layout.
+// xs/sm/md (<992px): user sees one panel at a time via internal Tabs
+//   (ErrorList | ErrorDetail | MultiBand) so panels don't get crushed.
+// lg+ (>=992px): 3-column Splitter, original behavior.
 import { useState } from 'react'
-import { Splitter, Tabs } from 'antd'
+import { Grid, Splitter, Tabs } from 'antd'
 import ErrorListPanel from './components/ErrorListPanel'
 import ErrorDetailPanel from './components/ErrorDetailPanel'
 import MultiBandDataPanel from './components/MultiBandDataPanel'
@@ -27,7 +31,99 @@ function Index() {
     setSelectedUuid(undefined)
   }
 
-  const TAB_BODY = { height: 'calc(100vh - 170px)' }
+  // R6.99-A: antd breakpoint hook. Returns {xs, sm, md, lg, xl, xxl}.
+  const bp = Grid.useBreakpoint()
+  const isCompact = !(bp.lg ?? false)
+  const [mobileTab, setMobileTab] = useState<string>('abnormal')
+  const TAB_BODY = {
+    height: isCompact ? 'auto' : 'calc(100vh - 170px)',
+    minHeight: 360,
+  }
+
+  // R6.99-A: shared body for the Abnormal Data tab.
+  // Compact: ErrorList + ErrorDetail + MultiBand as inner Tabs (single
+  //   panel visible at a time; user taps header to switch).
+  // Wide: original 3-column Splitter.
+  const abnormalBody = isCompact ? (
+    <div style={{ ...TAB_BODY, padding: 8 }}>
+      <Tabs
+        activeKey={mobileTab}
+        onChange={setMobileTab}
+        items={[
+          {
+            key: 'list',
+            label: 'Error Reports',
+            children: (
+              <ErrorListPanel
+                selectedErrorId={selectedErrorId}
+                onSelect={(id) => {
+                  handleSelectError(id)
+                  setMobileTab('detail')
+                }}
+              />
+            ),
+          },
+          {
+            key: 'detail',
+            label: 'Detail',
+            children: (
+              <ErrorDetailPanel
+                key={selectedErrorId}
+                errorId={selectedErrorId}
+                onSelectDetail={(uuid, ra, dec) => {
+                  handleSelectDetail(uuid, ra, dec)
+                  setMobileTab('multiband')
+                }}
+              />
+            ),
+          },
+          {
+            key: 'multiband',
+            label: 'Multi-band',
+            children: (
+              <MultiBandDataPanel
+                key={selectedUuid || selectedErrorId || 'empty'}
+                ra={selectedRa}
+                dec={selectedDec}
+                uuid={selectedUuid}
+              />
+            ),
+          },
+        ]}
+      />
+    </div>
+  ) : (
+    <div style={TAB_BODY}>
+      <Splitter className='w-full h-full'>
+        {/* 第一列：错误报告列表 */}
+        <Splitter.Panel defaultSize='33%' min='0' max='50%'>
+          <ErrorListPanel
+            selectedErrorId={selectedErrorId}
+            onSelect={handleSelectError}
+          />
+        </Splitter.Panel>
+
+        {/* 第二列：错误详情 */}
+        <Splitter.Panel defaultSize='33%' min='0' max='50%'>
+          <ErrorDetailPanel
+            key={selectedErrorId}
+            errorId={selectedErrorId}
+            onSelectDetail={handleSelectDetail}
+          />
+        </Splitter.Panel>
+
+        {/* 第三列：Multi-band Observation Data */}
+        <Splitter.Panel>
+          <MultiBandDataPanel
+            key={selectedUuid || selectedErrorId || 'empty'}
+            ra={selectedRa}
+            dec={selectedDec}
+            uuid={selectedUuid}
+          />
+        </Splitter.Panel>
+      </Splitter>
+    </div>
+  )
 
   return (
     <div className='w-full h-full pt-3'>
@@ -38,38 +134,7 @@ function Index() {
           {
             key: 'abnormal',
             label: 'Abnormal Data',
-            children: (
-              <div style={TAB_BODY}>
-                <Splitter className='w-full h-full'>
-                  {/* 第一列：错误报告列表 */}
-                  <Splitter.Panel defaultSize='33%' min='0' max='50%'>
-                    <ErrorListPanel
-                      selectedErrorId={selectedErrorId}
-                      onSelect={handleSelectError}
-                    />
-                  </Splitter.Panel>
-
-                  {/* 第二列：错误详情 */}
-                  <Splitter.Panel defaultSize='33%' min='0' max='50%'>
-                    <ErrorDetailPanel
-                      key={selectedErrorId}
-                      errorId={selectedErrorId}
-                      onSelectDetail={handleSelectDetail}
-                    />
-                  </Splitter.Panel>
-
-                  {/* 第三列：Multi-band Observation Data */}
-                  <Splitter.Panel>
-                    <MultiBandDataPanel
-                      key={selectedUuid || selectedErrorId || 'empty'}
-                      ra={selectedRa}
-                      dec={selectedDec}
-                      uuid={selectedUuid}
-                    />
-                  </Splitter.Panel>
-                </Splitter>
-              </div>
-            ),
+            children: abnormalBody,
           },
           {
             key: 'tod',

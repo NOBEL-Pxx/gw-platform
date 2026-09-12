@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Empty, Tooltip, Segmented, Slider } from 'antd'
+import { Empty, Tooltip, Grid, Segmented, Slider } from 'antd'
 import { LoadingOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 
 import { useRequest } from 'ahooks'
@@ -32,9 +32,12 @@ interface Props {
 // R6.2 lean: single source size — 100px display matches request so backend
 // /pipeline/merge-rgb runs at 100² (size² cost). 140 → 100 dropped merge-rgb
 // from 5s to 1.3s with no visible quality loss on a ~470px panel.
+// R6.99-A: THUMB now scales by viewport (see useBreakpoint in component).
+// Module-level const remains as default for non-React contexts (tests).
 const THUMB = 100
 // R6.61.b: thumb uses 400px for HiPS cutout (preserves R6.13 strategy —
 // HiPS JPEG at 400 looks crisp on ~470px panel; 100px FITS is just fallback).
+// R6.99-A: THUMB_HIPS_SIZE now also scales by viewport.
 const THUMB_HIPS_SIZE = 400
 
 // R6.27g: revert to direct CDS URL — Docker Desktop on local Windows
@@ -550,6 +553,15 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
   const [selected, setSelected] = useState<number[]>([0])
   const [rgbIndex, setRgbIndex] = useState<number | null>(null)
   const [viewerType, setViewerType] = useState<ViewerType>('aladin')
+  // R6.99-A: Firefly lazy mount — true on first user click of Firefly
+  // tab. Reverts R6.19 always-mount pattern (eliminated WASM init
+  // jank on every observation change).
+  const [fireflyMounted, setFireflyMounted] = useState(false)
+  // R6.99-A: responsive breakpoints drive THUMB + viewer heights.
+  const bp = Grid.useBreakpoint()
+  const thumbSize = bp.xs ? 70 : bp.sm ? 90 : 100
+  const viewerMinHeight = bp.xs ? 280 : bp.sm ? 340 : 420
+  const thumbStripMaxHeight = bp.xs ? 130 : bp.md ? 170 : 200
   // R6.3: track tiles whose <img> failed to load (broken PNG like NVSS 15x15 placeholder)
   const [loadError, setLoadError] = useState<Set<number>>(new Set())
   // R6.29f: track tiles currently loading (img in flight, not yet loaded)
@@ -924,7 +936,10 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
             { label: 'Firefly', value: 'firefly' },
           ]}
           value={viewerType}
-          onChange={(v) => setViewerType(v as ViewerType)}
+          onChange={(v) => {
+            setViewerType(v as ViewerType)
+            if (v === 'firefly') setFireflyMounted(true)
+          }}
         />
         <QualityToggle quality={quality} onChange={updateQuality} />
       </div>
@@ -963,9 +978,10 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
             )
           })()}
       </div>
+      {/* R6.99-A: viewport-aware minHeight. */}
       <div
         className='flex-1 min-h-0 overflow-hidden'
-        style={{ position: 'relative', minHeight: 420, zIndex: 1 }}
+        style={{ position: 'relative', minHeight: viewerMinHeight, zIndex: 1 }}
       >
         {noObs ? (
           <div className='h-full flex items-center justify-center'>
@@ -983,10 +999,14 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                 pointerEvents: viewerType === 'aladin' ? 'auto' : 'none',
               }}
             >
+              {/* R6.99-A: big Aladin image uses eager decode so the
+                  active band's image paints at full speed. Other
+                  (lazy-mount) Aladins get lazy decode. */}
               <Aladin
                 imageUrl={imageUrl}
                 alt={imageAlt}
                 imgRef={contrastDOM.bigImgRef}
+                eager
               />
             </div>
             {/* R6.19: Firefly always mounted (pre-mounts iframe during splash so
@@ -1000,15 +1020,16 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                 pointerEvents: viewerType === 'firefly' ? 'auto' : 'none',
               }}
             >
-              <FireflyViewer fits={fits} />
+              <FireflyViewer fits={fits} mount={fireflyMounted} />
             </div>
           </>
         )}
       </div>
+      {/* R6.99-A: viewport-aware thumb strip height. */}
       {!noObs && (
         <div
           className='mbp-thumb-strip flex gap-2 overflow-x-auto overflow-y-hidden flex-shrink-0 py-2'
-          style={{ maxHeight: 200 }}
+          style={{ maxHeight: thumbStripMaxHeight }}
         >
           {visibleEntries.map((entry, _visibleIdx) => {
             // R6.9b: map visible index back to original entries index for loadError
@@ -1052,7 +1073,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                       : 'rgba(255,255,255,0.03)',
                     borderRadius: 10,
                     padding: 4,
-                    width: THUMB + 8,
+                    width: thumbSize + 8,
                   }}
                   onClick={(e) => toggle(idx, e.ctrlKey || e.metaKey)}
                   onKeyDown={(e) => {
@@ -1072,8 +1093,8 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                     data-band={isBand ? entry.item.band : ''}
                     style={{
                       position: 'relative',
-                      width: THUMB,
-                      height: THUMB,
+                      width: thumbSize,
+                      height: thumbSize,
                       borderRadius: 6,
                       overflow: 'hidden',
                       background: '#000',
@@ -1371,7 +1392,4 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
   )
 }
 
-export default memo(
-  MultiBandDataPanel,
-  (p, n) => p.ra === n.ra && p.dec === n.dec && p.uuid === n.uuid,
-)
+export default memo(MultiBandDataPanel)
