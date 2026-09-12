@@ -2,6 +2,7 @@ package com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.contro
 
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.ImageCutoutDataSet;
 import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model.Metadata;
+import com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.service.ImageCutoutService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Component
 @RestController
@@ -27,6 +29,15 @@ public class ImageCutoutController {
 
     @Autowired
     private ImageCutoutDataSet dataSet;
+
+    /**
+     * R6.90 B1: ImageCutoutService handles the async download path. The controller
+     * delegates to it, returning a {@link CompletableFuture} so Spring's MVC async
+     * support holds the response open until the future completes — but the Tomcat
+     * request thread is released the moment this method returns.
+     */
+    @Autowired
+    private ImageCutoutService imageCutoutService;
 
     /**
      * R6.85-A-V1MARKER: emit a recognizable startup log line so {@code build-and-deploy-jar.py}'s
@@ -49,21 +60,33 @@ public class ImageCutoutController {
         log.info("R6.88: ImageCutoutController shutting down");
     }
 
+    /**
+     * R6.90 B5: auth() is now idempotent. The ImageCutoutDataSet layer tracks the
+     * current token + auth state; repeated auth() calls with a valid token skip
+     * the network round-trip to china-vo.org. This is a hot-path optimization
+     * for frontends that retry on transient failures.
+     */
     @PostMapping("/auth")
     public ResponseEntity<String> auth() {
-        // R6.85-A-NULLGUARD: surface 503 rather than NPE if @Autowired failed.
         if (dataSet == null) {
             log.error("ImageCutoutDataSet not initialized — please retry in a moment");
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body("Image cutout service not initialized — please retry in a moment");
         }
+        boolean wasAuth = dataSet.authorized();
         dataSet.auth();
-        return ResponseEntity.ok("Authenticated successfully");
+        boolean nowAuth = dataSet.authorized();
+        if (wasAuth && nowAuth) {
+            log.info("B5 auth() idempotent: already authenticated, skipped network call");
+            return ResponseEntity.ok("Already authenticated (idempotent)");
+        }
+        return ResponseEntity.ok(nowAuth
+            ? "Authenticated successfully"
+            : "Authentication failed — check imagecutout.username/password");
     }
 
     @GetMapping("/datasets")
     public ResponseEntity<List<String>> getDatasets() {
-        // R6.85-A-NULLGUARD: surface 503 rather than NPE if @Autowired failed.
         if (dataSet == null) {
             log.error("ImageCutoutDataSet not initialized — please retry in a moment");
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
@@ -72,45 +95,52 @@ public class ImageCutoutController {
         return ResponseEntity.ok(Arrays.asList(datasets));
     }
 
+    /**
+     * R6.90 B1: download is now async. The Tomcat request thread is freed as
+     * soon as we return the {@link CompletableFuture}. The actual upstream
+     * HTTP call (china-vo.org) + file write happens on the
+     * {@code imageCutoutExecutor} thread pool. The response is held open by
+     * Spring's MVC async support until the future completes.
+     */
     @PostMapping("/download")
-    public ResponseEntity<String> downloadImage(@RequestParam String output,
-                                                @RequestParam String datatype,
-                                                @RequestBody Metadata metadata) {
-        // R6.85-A-NULLGUARD: surface 503 rather than NPE if @Autowired failed.
-        if (dataSet == null) {
-            log.error("ImageCutoutDataSet not initialized — please retry in a moment");
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body("Image cutout service not initialized — please retry in a moment");
+    public CompletableFuture<ResponseEntity<String>> downloadImage(@RequestParam String output,
+                                                                   @RequestParam String datatype,
+                                                                   @RequestBody Metadata metadata) {
+        if (dataSet == null || imageCutoutService == null) {
+            log.error("ImageCutoutService not initialized — please retry in a moment");
+            return CompletableFuture.completedFuture(
+                ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("Image cutout service not initialized — please retry in a moment"));
         }
-        try {
-            dataSet.download(output, datatype, metadata);
-            if ("PNG".equalsIgnoreCase(datatype)) {
-                return ResponseEntity.ok("Image/fits: image downloaded successfully");
-            } else if ("png".equalsIgnoreCase(datatype)) {
-                return ResponseEntity.ok("Image/fits: image downloaded successfully");
-            } else if  ("FITS".equalsIgnoreCase(datatype)){
-                return ResponseEntity.ok("Image/fits: fits downloaded successfully");
-            } else if  ("fits".equalsIgnoreCase(datatype)){
-                return ResponseEntity.ok("Image/fits: fits downloaded successfully");
-            }
-            // R6.88: datatype was neither PNG nor FITS — surface 400 instead of returning null
-            // (the previous behaviour silently produced an NPE for the caller).
+
+        // R6.88: datatype validation done up-front (was deferred to after download,
+        // causing a wasted upstream round-trip on bad input).
+        boolean pngType = "PNG".equalsIgnoreCase(datatype) || "png".equalsIgnoreCase(datatype);
+        boolean fitsType = "FITS".equalsIgnoreCase(datatype) || "fits".equalsIgnoreCase(datatype);
+        if (!pngType && !fitsType) {
             log.warn("downloadImage: unsupported datatype={}", datatype);
-            // R6.88 security hardening (W1 from 3-perspective review): sanitize the echoed datatype
-            // to strip control chars + HTML-significant chars so the message cannot be abused for
-            // XSS (frontend `dangerouslySetInnerHTML`), CSV-formula injection, or CRLF/response
-            // splitting. Whitelist-friendly: anything outside [A-Za-z0-9_ -] becomes '?'.
-            String safeDatatype = datatype.replaceAll("[^A-Za-z0-9_\\- ]", "?");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Invalid datatype: '" + safeDatatype + "'. Supported values: PNG, FITS.");
-        } catch (IOException e) {
-            // R6.89 W3: do NOT echo e.getMessage() to the caller — it can leak internal file
-            // paths (e.g., /tmp/cutout-2026-09-12-XYZ.tmp), Mongo ObjectIds, or other host-
-            // specific details. Log the full exception server-side; return a generic message.
-            log.error("downloadImage failed (datatype={}, output={}): {}",
-                    datatype, output, e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to download image. Please retry; if it persists, contact support.");
+            String safeDatatype = datatype == null ? "" : datatype.replaceAll("[^A-Za-z0-9_\\- ]", "?");
+            return CompletableFuture.completedFuture(
+                ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("Invalid datatype: '" + safeDatatype + "'. Supported values: PNG, FITS."));
         }
+
+        // Delegate to async service. .thenApply / .exceptionally wire the response.
+        return imageCutoutService.downloadAsync(output, datatype, metadata)
+            .<ResponseEntity<String>>thenApply(msg -> {
+                if (pngType) {
+                    return ResponseEntity.ok("Image/fits: image downloaded successfully");
+                }
+                return ResponseEntity.ok("Image/fits: fits downloaded successfully");
+            })
+            .exceptionally(ex -> {
+                // R6.89 W3: do NOT echo ex.getMessage() to the caller — it can leak internal
+                // file paths, Mongo ObjectIds, or host-specific details.
+                Throwable root = ex.getCause() != null ? ex.getCause() : ex;
+                log.error("downloadImage failed (datatype={}, output={}): {}",
+                    datatype, output, root.getMessage(), root);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to download image. Please retry; if it persists, contact support.");
+            });
     }
 }

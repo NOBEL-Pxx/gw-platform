@@ -124,6 +124,19 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-webmvc</artifactId>
         </dependency>
+
+        <!-- R6.90 B2: Micrometer metrics API (MeterRegistry, Counter, Timer).
+             spring-boot-starter-actuator brings in micrometer-core transitively,
+             but the service module needs it as a direct compile-scope dep so the
+             MetricsInterceptor can import the types. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

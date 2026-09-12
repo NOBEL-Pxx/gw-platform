@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,7 +25,13 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Component
 public class ImageCutoutDataSet extends DataSet {
     private static final Logger logger = LoggerFactory.getLogger(ImageCutoutDataSet.class);
-    private String token = "";
+
+    // R6.90 B5: token + auth-in-progress tracking for idempotency.
+    // Volatile visibility is sufficient for token (single-writer pattern: read in
+    // authorized(), write in auth() under synchronized). The AtomicBoolean
+    // prevents two concurrent auth() calls from racing the network round-trip.
+    private volatile String token = "";
+    private final AtomicBoolean authInProgress = new AtomicBoolean(false);
 
     @Value("${imagecutout.username}")
     private String username;
@@ -42,31 +49,70 @@ public class ImageCutoutDataSet extends DataSet {
     public void auth(String token) {
         // Not used. Authentication is handled by auth() with properties.
     }
-    // Authenticate using credentials from application.properties
+
+    /**
+     * R6.90 B5: auth() is now IDEMPOTENT.
+     *
+     * <p>If a valid token is already cached, the call returns immediately without
+     * a network round-trip. This protects against:
+     * <ul>
+     *   <li>Frontend retry storms (e.g., a click on "download" being doubled-tapped
+     *       produces two auth() calls — only the first hits the network).</li>
+     *   <li>Concurrent auth() invocations from different threads (e.g., the
+     *       async ImageCutoutService + a parallel manual retry). The
+     *       {@code authInProgress} AtomicBoolean ensures only one in-flight
+     *       login at a time.</li>
+     *   <li>Upstream rate-limiting: china-vo.org's /generate/login endpoint
+     *       throttles aggressively; skipping the call when the token is still
+     *       valid saves quota.</li>
+     * </ul>
+     *
+     * <p>Iron rule R6.90-C: any side-effecting method on a @Component MUST be
+     * idempotent on retry, OR must use an in-progress flag to coalesce
+     * concurrent invocations. The existing rest of the codebase (LlmController
+     * query-cache) follows the same pattern.
+     */
     public void auth() {
-        String apiBaseUrl = "https://hips.china-vo.org";
-        String loginUrl = apiBaseUrl + "/generate/login";
-        RestTemplate restTemplate = new RestTemplate();
-        ObjectMapper mapper = new ObjectMapper();
+        // Fast path: already authenticated, skip the network call.
+        if (!token.isEmpty() && authorized()) {
+            logger.debug("B5: auth() idempotent — token already valid, skipping login");
+            return;
+        }
+
+        // Coalesce concurrent auth() invocations. If another thread is already
+        // authenticating, return immediately and let that thread complete the login.
+        if (!authInProgress.compareAndSet(false, true)) {
+            logger.debug("B5: auth() idempotent — another thread is already authenticating");
+            return;
+        }
+
         try {
-            Map<String, String> loginData = new HashMap<>();
-            loginData.put("username", username);
-            loginData.put("password", password);
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Content-Type", "application/json");
-            HttpEntity<String> entity = new HttpEntity<>(mapper.writeValueAsString(loginData), headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(loginUrl, entity, String.class);
-            if (response.getStatusCodeValue() == 200) {
-                JsonNode json = mapper.readTree(response.getBody());
-                this.token = json.path("token").asText();
-                logger.info("Login successful, token obtained");
-            } else {
-                logger.error("Login failed: HTTP {}", response.getStatusCodeValue());
+            String apiBaseUrl = "https://hips.china-vo.org";
+            String loginUrl = apiBaseUrl + "/generate/login";
+            RestTemplate restTemplate = new RestTemplate();
+            ObjectMapper mapper = new ObjectMapper();
+            try {
+                Map<String, String> loginData = new HashMap<>();
+                loginData.put("username", username);
+                loginData.put("password", password);
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("Content-Type", "application/json");
+                HttpEntity<String> entity = new HttpEntity<>(mapper.writeValueAsString(loginData), headers);
+                ResponseEntity<String> response = restTemplate.postForEntity(loginUrl, entity, String.class);
+                if (response.getStatusCodeValue() == 200) {
+                    JsonNode json = mapper.readTree(response.getBody());
+                    this.token = json.path("token").asText();
+                    logger.info("Login successful, token obtained");
+                } else {
+                    logger.error("Login failed: HTTP {}", response.getStatusCodeValue());
+                    this.token = "";
+                }
+            } catch (Exception e) {
+                logger.error("Failed to authenticate with username/password", e);
                 this.token = "";
             }
-        } catch (Exception e) {
-            logger.error("Failed to authenticate with username/password", e);
-            this.token = "";
+        } finally {
+            authInProgress.set(false);
         }
     }
 

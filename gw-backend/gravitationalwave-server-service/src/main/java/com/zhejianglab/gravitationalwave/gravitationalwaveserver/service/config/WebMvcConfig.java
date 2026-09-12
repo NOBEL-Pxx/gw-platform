@@ -17,6 +17,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Resource
     private AuthInterceptor authInterceptor;
 
+    // R6.90 B2: MetricsInterceptor — counter + timer for production controller requests.
+    // Tagged with controller class name (StaticFileController, SearchController,
+    // ImageCutoutController) so /actuator/metrics can group by controller.
+    @Resource
+    private MetricsInterceptor metricsInterceptor;
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // Rate limit runs FIRST — applies to /api/** + /static-files/** (v4.16)
@@ -31,5 +37,18 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns("/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/health");
+
+        // R6.90 B2: MetricsInterceptor runs LAST so it observes the FINAL response status
+        // (after rate-limit and auth interceptors). Applies to the same 3 production
+        // controller paths: /api/** + /static-files/**. /api/health is excluded to keep
+        // Prometheus cardinality bounded (health checks every 5s = 17k/day/controller).
+        registry.addInterceptor(metricsInterceptor)
+                .addPathPatterns(
+                    "/api/app/gravitationalwave/**",
+                    "/api/app/gravitationalwave/error/**",
+                    "/static-files/**",
+                    "/api/llm/**",
+                    "/pipeline/**"
+                );
     }
 }
