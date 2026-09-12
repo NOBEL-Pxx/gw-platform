@@ -1,9 +1,17 @@
 package com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.model;
 
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -39,6 +47,37 @@ public class ImageCutoutDataSet extends DataSet {
     //   ObjectMapper: thread-safe for read operations after construction (no per-request reconfiguration here).
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * R6.95-A: SSRF defense. china-vo.org's /generate endpoint responds with a 302
+     * {@code Location} header that points to the actual image/FITS file. If china-vo.org
+     * is compromised or MITM'd (TLS chain valid but content tampered), a malicious
+     * Location header could redirect the Bearer token to an attacker-controlled host.
+     *
+     * <p>Mitigation: validate the {@code Location} host suffix before following. Any host
+     * NOT ending in {@code .china-vo.org} is rejected (IOException).
+     *
+     * <p>Iron rule R6.95-A: any URL derived from upstream {@code Location} header MUST be
+     * validated against the allowed host suffix before fetching.
+     */
+    private static final String ALLOWED_REDIRECT_HOST_SUFFIX = ".china-vo.org";
+
+    /**
+     * R6.95-B: path-traversal defense. The {@code output} parameter comes from
+     * {@link com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.controller.ImageCutoutController}'s
+     * {@code @RequestParam output} (caller-controlled). Without canonicalization, callers
+     * can write outside the intended directory via {@code ../} sequences or absolute paths.
+     *
+     * <p>Mitigation: canonicalize via {@link Paths#get}(output).toAbsolutePath().normalize()
+     * and require the result to start with this base directory. Configurable via
+     * {@code imagecutout.output.basedir} property; defaults to {@code /tmp/gw-cutout}
+     * (Linux container convention).
+     *
+     * <p>Iron rule R6.95-B: any caller-provided file path MUST be canonicalized + validated
+     * against the configured basedir before write.
+     */
+    @Value("${imagecutout.output.basedir:/tmp/gw-cutout}")
+    private String outputBasedir;
 
     // R6.90 B5: token + auth-in-progress tracking for idempotency.
     // Volatile visibility is sufficient for token (single-writer pattern: read in
@@ -175,8 +214,17 @@ public class ImageCutoutDataSet extends DataSet {
             String locationHeader = response.getHeaders().getLocation() != null ? response.getHeaders().getLocation().toString() : null;
             if (locationHeader != null) {
                 logger.info("Redirected to: {}", locationHeader);
+                // R6.95-A: SSRF defense — validate Location header host against allowed suffix.
+                // china-vo.org returns 302 with absolute URL; reject anything that doesn't end in
+                // .china-vo.org (or is the bare apex china-vo.org) to prevent redirecting the
+                // Bearer token to an attacker host.
+                validateImageUrl("R6.95-A", locationHeader);
                 imagePath = locationHeader;
             }
+            // R6.95-A: SSRF defense — also validate imagePath if it came from the JSON body
+            // (image_path field). Without this, a compromised/MITM'd china-vo.org could bypass
+            // the Location-header branch entirely by returning a JSON body with a foreign URL.
+            validateImageUrl("R6.95-A", imagePath);
             ResponseEntity<byte[]> imageResponse = restTemplate.exchange(
                     imagePath,
                     HttpMethod.GET,
@@ -192,9 +240,44 @@ public class ImageCutoutDataSet extends DataSet {
             if (imageContent == null || imageContent.length == 0) {
                 throw new IOException("Failed to download image/fits content. The response body is empty.");
             }
-            try (FileOutputStream fos = new FileOutputStream(output)) {
-                fos.write(imageContent);
-                logger.info("Downloaded image/fits size: {} bytes", imageContent.length);
+            // R6.95-B: path-traversal defense — canonicalize + validate against configured basedir.
+            // The 'output' parameter is @RequestParam-controlled by the caller, so untrusted.
+            // R6.95-B.1/B.2 symlink + TOCTOU defense:
+            //   1. Canonicalize basedir (resolve its own symlinks) so the comparison target is real
+            //   2. Canonicalize the parent directory of the requested path (resolve symlinks)
+            //      and verify it lies under basedir
+            //   3. Use CREATE_NEW + WRITE so we fail atomically if the leaf already exists
+            //      or is a symlink (a symlink would let an attacker redirect the write)
+            Path basedirPath = Paths.get(outputBasedir).toAbsolutePath().normalize();
+            if (!Files.exists(basedirPath)) {
+                Files.createDirectories(basedirPath);
+            }
+            basedirPath = basedirPath.toRealPath();
+            Path requestedPath = Paths.get(output).toAbsolutePath().normalize();
+            Path parent = requestedPath.getParent();
+            if (parent == null) {
+                throw new IOException("R6.95-B: requested output has no parent directory: " + output);
+            }
+            Path realParent;
+            try {
+                realParent = parent.toRealPath();
+            } catch (NoSuchFileException e) {
+                if (!parent.startsWith(basedirPath)) {
+                    throw new IOException("R6.95-B: refused output path: parent '" + parent
+                        + "' outside basedir '" + basedirPath + "'");
+                }
+                Files.createDirectories(parent);
+                realParent = parent.toRealPath();
+            }
+            if (!realParent.startsWith(basedirPath)) {
+                throw new IOException("R6.95-B: refused output path: parent '" + parent
+                    + "' resolves to '" + realParent + "' outside basedir '" + basedirPath + "'");
+            }
+            Path canonical = realParent.resolve(requestedPath.getFileName());
+            try (OutputStream os = Files.newOutputStream(canonical,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                os.write(imageContent);
+                logger.info("Downloaded image/fits size: {} bytes to {}", imageContent.length, canonical);
             }
         } catch (HttpClientErrorException | HttpServerErrorException e) {
             logger.error("HTTP error during image/fits download: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
@@ -218,5 +301,46 @@ public class ImageCutoutDataSet extends DataSet {
     public String[] getDatasets() {
         String url = "https://hips.china-vo.org/generate/list-dataset";
         return restTemplate.getForObject(url, String[].class);
+    }
+
+    /**
+     * R6.95-A SSRF helper: parse a URL and validate its host against the allowed
+     * china-vo.org suffix (or the bare apex).
+     *
+     * <p>Throws {@link IOException} if:
+     * <ul>
+     *   <li>the URL is malformed ({@link URISyntaxException})</li>
+     *   <li>the host is null (e.g., a relative URL)</li>
+     *   <li>the host is not the apex {@code china-vo.org} AND does not end with
+     *       {@code .china-vo.org} (e.g., {@code evil.com}, {@code not.china-vo.org.evil.com},
+     *       {@code evil.com/.china-vo.org})</li>
+     * </ul>
+     *
+     * <p>IPv6 literals (e.g., {@code https://[::1]/foo}) are rejected because the host
+     * does not match the allowed suffix — by design, only FQDN redirects are allowed.
+     *
+     * <p>The {@code rule} parameter is the iron-rule tag included in the error message
+     * (e.g., {@code "R6.95-A"}) for log correlation.
+     *
+     * @param rule the iron-rule tag (e.g., "R6.95-A") — used in the IOException message
+     * @param url the URL string to validate (Location header value or JSON body URL)
+     * @throws IOException if the URL host is not in the allowed set
+     */
+    private static void validateImageUrl(String rule, String url) throws IOException {
+        URI parsed;
+        try {
+            parsed = new URI(url);
+        } catch (URISyntaxException e) {
+            throw new IOException(rule + ": refused malformed URL: " + url, e);
+        }
+        String host = parsed.getHost();
+        if (host == null) {
+            throw new IOException(rule + ": refused URL with null host: " + url);
+        }
+        String hostLc = host.toLowerCase(Locale.ROOT);
+        if (!hostLc.equals("china-vo.org") && !hostLc.endsWith(ALLOWED_REDIRECT_HOST_SUFFIX)) {
+            throw new IOException(rule + ": refused URL with non-allowed host: '"
+                + host + "' (allowed: china-vo.org or *.china-vo.org)");
+        }
     }
 }
