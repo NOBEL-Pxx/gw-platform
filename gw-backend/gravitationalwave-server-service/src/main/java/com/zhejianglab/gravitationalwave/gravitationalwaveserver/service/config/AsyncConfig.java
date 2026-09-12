@@ -10,8 +10,6 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * R6.90 B1: AsyncConfig for the ImageCutoutController async-download refactor.
@@ -31,8 +29,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>{@code daemon=true}: mirrors the HealthController probe-executor pattern
  *       (R6.83) — daemon threads don't block JVM shutdown. Critical so a stuck
  *       cutout request cannot prevent graceful container exit.</li>
- *   <li>{@code threadNamePrefix="image-cutout-" + AtomicInteger}: forensic
- *       clarity in thread dumps (same NIT as HealthController).</li>
+ *   <li>{@code threadNamePrefix="image-cutout-"}: Spring's ThreadPoolTaskExecutor
+ *       appends an incrementing counter, so thread names look like
+ *       {@code image-cutout-1}, {@code image-cutout-2}, … — same forensic
+ *       clarity as a custom ThreadFactory without the dead-code {@code AtomicInteger}
+ *       that R6.94e removed.</li>
  *   <li>{@code setWaitForTasksToCompleteOnShutdown(true)} + 30s timeout: lets
  *       in-flight downloads finish (write to disk) instead of dropping partial
  *       files on the user. 30s is generous — single file writes should complete
@@ -44,6 +45,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Iron rule R6.90-A: every @Async in this codebase MUST use a named executor
  * bean (not {@code SimpleAsyncTaskExecutor} which creates unbounded threads).
+ *
+ * <p>R6.94e: dropped custom {@code ThreadFactory} + {@code AtomicInteger seq}
+ * field. Spring's {@code ThreadPoolTaskExecutor} has a built-in {@code setDaemon}
+ * (inherited from {@code ExecutorConfigurationSupport}) and its
+ * {@code setThreadNamePrefix} already appends an internal incrementing counter.
+ * The custom factory only added daemon support; that is now applied directly
+ * via {@code exec.setDaemon(true)} so the bean is simpler and the seq field
+ * is no longer dead code.
  */
 @Configuration
 @EnableAsync
@@ -53,18 +62,12 @@ public class AsyncConfig implements AsyncConfigurer {
 
     @Bean(name = "imageCutoutExecutor")
     public Executor imageCutoutExecutor() {
-        AtomicInteger seq = new AtomicInteger(0);
-        ThreadFactory tf = r -> {
-            Thread t = new Thread(r, "image-cutout-" + seq.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        };
         ThreadPoolTaskExecutor exec = new ThreadPoolTaskExecutor();
         exec.setCorePoolSize(2);
         exec.setMaxPoolSize(4);
         exec.setQueueCapacity(50);
-        exec.setThreadFactory(tf);
         exec.setThreadNamePrefix("image-cutout-");
+        exec.setDaemon(true);
         exec.setWaitForTasksToCompleteOnShutdown(true);
         exec.setAwaitTerminationSeconds(30);
         exec.initialize();

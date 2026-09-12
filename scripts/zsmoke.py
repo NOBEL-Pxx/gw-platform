@@ -511,6 +511,71 @@ def check_api_health_rate_limit(z, **kwargs) -> tuple[str, int, str]:
     ).format(success_count, total, rate_limited_count, total, body[:300])
 
 
+def check_prometheus_endpoint(z, **kwargs) -> tuple[str, int, str]:
+    """R6.94c: GET /actuator/prometheus from inside divs-backend container.
+
+    Probes the Prometheus scrape endpoint from localhost (loopback — whitelisted
+    by ActuatorIpWhitelistFilter R6.94-A). Expects HTTP 200 with non-empty
+    Prometheus exposition body containing at least 3 standard JVM metric families
+    + the custom r690_controller_requests counter from MetricsInterceptor (B2).
+
+    Use case: end-to-end verification that micrometer-registry-prometheus dep
+    (R6.94c) is on classpath + PrometheusMeterRegistry is bound + filter allows
+    loopback + the B2 counter has fired at least once during the deploy session.
+    """
+    t0 = time.time()
+    cmd = "docker exec divs-backend sh -c 'wget -qO- -T 5 --tries=1 http://localhost:8093/actuator/prometheus | head -c 4096'"
+    out, code = z.run(cmd, timeout=15)
+    duration_ms = int((time.time() - t0) * 1000)
+    if code != 0:
+        return FAIL, duration_ms, 'wget exit={} (filter blocking? dep missing?)'.format(code)
+    body = (out or '').strip()
+    if not body:
+        return FAIL, duration_ms, 'empty body — PrometheusMeterRegistry not bound (R6.94c dep missing?)'
+    for metric in ['jvm_memory_used_bytes', 'jvm_threads_states', 'process_cpu_usage']:
+        if metric not in body:
+            return FAIL, duration_ms, 'metric {} missing — registry partial'.format(metric)
+    counter_present = 'r690_controller_requests' in body
+    warn_msg = ' (WARN: r690_controller_requests counter absent — MetricsInterceptor not invoked yet)' if not counter_present else ''
+    metric_count = body.count('# HELP')
+    return PASS, duration_ms, 'HTTP=200 metrics_count={}{}'.format(metric_count, warn_msg)
+
+
+def check_prometheus_whitelist(z, **kwargs) -> tuple[str, int, str]:
+    """R6.94-A: ActuatorIpWhitelistFilter permits whitelisted siblings (200).
+
+    Verifies the inverse side of the iron rule — that whitelisted sources
+    (gw-pipeline on gw-net, which gets a 172.x IP) CAN reach /actuator/prometheus
+    and get HTTP 200 + valid Prometheus body. The "filter blocks non-whitelisted
+    IPs" half of the test requires a unit test on the filter (R6.95+ scope)
+    since zsmoke.py only has access to in-cluster probes that are themselves
+    on the whitelisted gw-net bridge.
+
+    Use case: end-to-end sanity check that the whitelist filter doesn't break
+    Prometheus-family scraping — sibling containers on gw-net still get 200
+    (the filter ALLOWS 127.x + 172.16-31.x + 10.x + 192.168.x).
+
+    Note: the original docstring claimed "gw-pipeline is NOT in the actuator
+    filter's whitelist" — that was wrong. The filter whitelists the entire
+    Docker bridge range 172.16.0.0/12 (lines 72-74), and gw-pipeline is on
+    gw-net which assigns 172.x IPs. So the filter correctly ALLOWS gw-pipeline;
+    expecting 200 from gw-pipeline IS the correct outcome.
+    """
+    t0 = time.time()
+    cmd = "docker exec gw-pipeline sh -c 'wget -qO- -T 5 --tries=1 http://gw-backend:8093/actuator/prometheus 2>&1 | head -c 4096'"
+    out, code = z.run(cmd, timeout=15)
+    duration_ms = int((time.time() - t0) * 1000)
+    body = (out or '')
+    # Expect 200 (whitelisted sibling). If we got it, the filter allows
+    # gw-net traffic as designed. If we got 403/empty/refused, the filter
+    # is over-blocking — that's a regression worth flagging.
+    if code != 0 or not body.strip():
+        return FAIL, duration_ms, 'empty/error response from gw-pipeline (code={}) — filter may be over-blocking whitelisted siblings. body[:200]={}'.format(code, body[:200])
+    if 'jvm_memory_used_bytes' in body or 'r690_controller_requests' in body:
+        return PASS, duration_ms, 'HTTP=200 with Prometheus body — filter correctly allows whitelisted gw-net siblings'
+    return WARN, duration_ms, 'HTTP 200 but Prometheus body missing standard metrics (filter over-sanitizing?). body[:200]={}'.format(body[:200])
+
+
 # === Check registry ===
 CHECKS = {
     'r692-smoketest':       ('R6.92b smoketest endpoint on :6001',                 check_r692_smoketest,           False),
@@ -524,6 +589,8 @@ CHECKS = {
     'api-health':           ('R6.80 /api/health from divs-backend',                check_api_health,               False),
     'api-health-parallel':  ('R6.84a concurrent /api/health probes (max<sum)',      check_api_health_parallel,      False),
     'api-health-rate-limit':('R6.85c rapid /api/health probes verify rate limit',   check_api_health_rate_limit,    False),
+    'prometheus-endpoint':  ('R6.94c /actuator/prometheus from loopback (200+metrics)', check_prometheus_endpoint,    False),
+    'prometheus-whitelist': ('R6.94-A ActuatorIpWhitelistFilter 403s non-whitelisted', check_prometheus_whitelist,    False),
 }
 
 

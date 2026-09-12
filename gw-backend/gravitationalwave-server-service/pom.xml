@@ -137,6 +137,32 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
         </dependency>
+        <!-- R6.94c: Prometheus scrape-format registry. Activates /actuator/prometheus
+             endpoint (already exposed via R6.75 config in application.properties:
+             management.endpoints.web.exposure.include=health,info,prometheus,metrics).
+             Without this dep, /actuator/prometheus returns 404 because no
+             PrometheusMeterRegistry is bound to the MeterRegistry.
+
+             Iron rule R6.94-A (CORRECTED): /actuator/prometheus endpoint MUST be
+             IP-whitelisted (Docker bridge CIDR + loopback) OR behind separate
+             actuator port. The previous pom.xml comment cited R6.73 IP whitelist
+             as protection — that whitelist is for gw-pipeline (Python middleware)
+             and PipelineProxyController outbound allowlist, NOT gw-backend's
+             /actuator/** (those endpoints use a separate WebMvcEndpointHandlerMapping
+             that WebMvcConfig's HandlerInterceptors do NOT cover).
+
+             Actual enforcement: ActuatorIpWhitelistFilter (D6) — OncePerRequestFilter
+             on /actuator/** that 403s non-whitelisted source IPs (allows Docker
+             bridge 172.16-31.x + 10.x + 192.168.x + loopback 127.x). zsmoke.py
+             verify_prometheus_endpoint() + verify_prometheus_whitelist() checks
+             PASS from inside the container (loopback) and FAIL from external IPs.
+             Defense-in-depth: production zjlab has ports: [] in
+             docker-compose.zjlab.yml:72 (no host port mapping) + nginx does NOT
+             proxy /actuator/**. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

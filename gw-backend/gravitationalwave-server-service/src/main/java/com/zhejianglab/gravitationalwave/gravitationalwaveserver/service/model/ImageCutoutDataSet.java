@@ -26,6 +26,20 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class ImageCutoutDataSet extends DataSet {
     private static final Logger logger = LoggerFactory.getLogger(ImageCutoutDataSet.class);
 
+    // R6.94d: shared RestTemplate + ObjectMapper (R6.85-A-REST pattern from LlmController / PipelineProxyController).
+    // Previously each of auth()/download()/getDatasets() did `new RestTemplate()` + `new ObjectMapper()` per call —
+    // that's 3 RestTemplate allocations + 2 ObjectMapper allocations per request cycle, defeating connection pooling
+    // (SimpleClientHttpRequestFactory is created fresh each time so connections cannot be reused).
+    //
+    // Iron rule R6.94-B: any @Component with RestTemplate usage MUST use instance-level `final RestTemplate` field
+    // (shared connection pool, single ObjectMapper for thread-safety). NO `new RestTemplate()` inside hot-path methods.
+    //
+    // Thread-safety notes:
+    //   RestTemplate: thread-safe for execute() once configured (per Spring docs).
+    //   ObjectMapper: thread-safe for read operations after construction (no per-request reconfiguration here).
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     // R6.90 B5: token + auth-in-progress tracking for idempotency.
     // Volatile visibility is sufficient for token (single-writer pattern: read in
     // authorized(), write in auth() under synchronized). The AtomicBoolean
@@ -89,22 +103,21 @@ public class ImageCutoutDataSet extends DataSet {
         try {
             String apiBaseUrl = "https://hips.china-vo.org";
             String loginUrl = apiBaseUrl + "/generate/login";
-            RestTemplate restTemplate = new RestTemplate();
-            ObjectMapper mapper = new ObjectMapper();
             try {
                 Map<String, String> loginData = new HashMap<>();
                 loginData.put("username", username);
                 loginData.put("password", password);
                 HttpHeaders headers = new HttpHeaders();
                 headers.set("Content-Type", "application/json");
-                HttpEntity<String> entity = new HttpEntity<>(mapper.writeValueAsString(loginData), headers);
+                HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(loginData), headers);
+                // R6.94d: getStatusCode().value() (not deprecated getStatusCodeValue())
                 ResponseEntity<String> response = restTemplate.postForEntity(loginUrl, entity, String.class);
-                if (response.getStatusCodeValue() == 200) {
-                    JsonNode json = mapper.readTree(response.getBody());
+                if (response.getStatusCode().value() == 200) {
+                    JsonNode json = objectMapper.readTree(response.getBody());
                     this.token = json.path("token").asText();
                     logger.info("Login successful, token obtained");
                 } else {
-                    logger.error("Login failed: HTTP {}", response.getStatusCodeValue());
+                    logger.error("Login failed: HTTP {}", response.getStatusCode().value());
                     this.token = "";
                 }
             } catch (Exception e) {
@@ -137,7 +150,6 @@ public class ImageCutoutDataSet extends DataSet {
         String url = builder.toUriString();
         logger.info("Request URL: {}", url);
 
-        RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + this.token);
         headers.set("User-Agent", "Java-Spring RestClient");
@@ -150,11 +162,10 @@ public class ImageCutoutDataSet extends DataSet {
                     entity,
                     String.class
             );
-            if (response.getStatusCodeValue() != 200) {
-                logger.error("Failed to generate image: HTTP Status {}", response.getStatusCodeValue());
-                throw new IOException("Failed to generate image: " + response.getStatusCodeValue());
+            if (response.getStatusCode().value() != 200) {
+                logger.error("Failed to generate image: HTTP Status {}", response.getStatusCode().value());
+                throw new IOException("Failed to generate image: " + response.getStatusCode().value());
             }
-            ObjectMapper objectMapper = new ObjectMapper();
             JsonNode jsonResponse = objectMapper.readTree(response.getBody());
             String imagePath = jsonResponse.path("image_path").asText();
             if (imagePath.isEmpty()) {
@@ -172,9 +183,9 @@ public class ImageCutoutDataSet extends DataSet {
                     entity,
                     byte[].class
             );
-            if (imageResponse.getStatusCodeValue() != 200) {
+            if (imageResponse.getStatusCode().value() != 200) {
                 String errorMessage = new String(imageResponse.getBody(), StandardCharsets.UTF_8);
-                logger.error("Failed to download image/fits: {} - {}", imageResponse.getStatusCodeValue(), errorMessage);
+                logger.error("Failed to download image/fits: {} - {}", imageResponse.getStatusCode().value(), errorMessage);
                 throw new IOException("Failed to download image/fits: " + errorMessage);
             }
             byte[] imageContent = imageResponse.getBody();
@@ -206,7 +217,6 @@ public class ImageCutoutDataSet extends DataSet {
 
     public String[] getDatasets() {
         String url = "https://hips.china-vo.org/generate/list-dataset";
-        RestTemplate restTemplate = new RestTemplate();
         return restTemplate.getForObject(url, String[].class);
     }
 }
