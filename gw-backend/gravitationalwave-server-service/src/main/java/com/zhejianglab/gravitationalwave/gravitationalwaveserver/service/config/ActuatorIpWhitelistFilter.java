@@ -12,9 +12,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.List;
 
 /**
- * R6.94-A: /actuator/** IP whitelist filter.
+ * R6.94-A: /actuator/** IP whitelist filter (extended by R6.96-O3 to IPv6).
  *
  * <p>Spring Boot Actuator endpoints ({@code /actuator/health}, {@code /actuator/info},
  * {@code /actuator/metrics}, {@code /actuator/prometheus}) are served by a separate
@@ -32,6 +35,14 @@ import java.io.IOException;
  *       from a sibling container with a 172.x IP)</li>
  *   <li>10.0.0.0/8 — alternate Docker compose bridge range</li>
  *   <li>192.168.0.0/16 — host network in dev mode</li>
+ *   <li>::1/128 — IPv6 loopback (docker exec)</li>
+ *   <li>fd00::/8 — IPv6 ULA (Docker Compose v2 IPv6 bridge default)</li>
+ *   <li>fe80::/10 — IPv6 link-local</li>
+ *   <li>::ffff:172.16.0.0/104 + ::ffff:10.0.0.0/104 + ::ffff:192.168.0.0/112 —
+ *       IPv4-mapped IPv6 representations (covered automatically because
+ *       {@link InetAddress#getByName(String)} returns the underlying 4-byte
+ *       IPv4 address when the input is IPv4-mapped — which matches the
+ *       IPv4 CIDRs above byte-for-byte)</li>
  * </ul>
  * Everything else (e.g., a malicious container, or the public internet via
  * nginx) gets HTTP 403.
@@ -51,6 +62,12 @@ import java.io.IOException;
  * (Python middleware in {@code gw-pipeline/src/pipeline/middleware/ip_whitelist.py})
  * and PipelineProxyController outbound allowlist — NOT gw-backend's
  * /actuator/**. This filter is the actual enforcement.
+ *
+ * <p>R6.96-O3: IPv6 support — R6.94-A baseline only matched IPv4 prefixes
+ * (String.startsWith on dotted-decimal). Docker Compose v2 enables IPv6
+ * by default and K8s pod networking is dual-stack; the previous filter
+ * silently let every IPv6 client through. Replaced String-prefix matching
+ * with CIDR byte comparison via {@link CidrRange} (works for both v4 + v6).
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -60,21 +77,25 @@ public class ActuatorIpWhitelistFilter extends OncePerRequestFilter {
     private static final String ACTUATOR_PATH_PREFIX = "/actuator/";
 
     /**
-     * R6.94-A: whitelisted IP prefixes for /actuator/** access.
-     *
-     * <p>Implemented as prefix matchers (not full CIDR math) because Actuator
-     * sees per-request source IP — typically from Docker bridge (172.x.x.x)
-     * or loopback (127.x.x.x). The full Docker bridge range 172.16.0.0/12
-     * covers 172.16-172.31, so we list each prefix explicitly.
+     * R6.96-O3: CIDR ranges covering loopback + Docker bridge + private + host,
+     * for BOTH IPv4 and IPv6. Implemented as a list of {@link CidrRange} for
+     * byte-level matching (R6.94-A's String.startsWith was IPv4-only).
      */
-    private static final String[] WHITELIST_PREFIXES = {
-        "127.",          // loopback (docker exec into container)
-        "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
-        "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-        "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",  // Docker bridge 172.16/12
-        "10.",           // Private network 10.0.0.0/8 (some compose networks)
-        "192.168."       // Host network in dev mode
-    };
+    private static final List<CidrRange> WHITELIST_CIDRS = List.of(
+        // ── IPv4 (R6.94-A baseline) ──
+        CidrRange.of("127.0.0.0/8"),       // loopback v4 (docker exec into container)
+        CidrRange.of("172.16.0.0/12"),     // Docker bridge v4 (172.16-172.31)
+        CidrRange.of("10.0.0.0/8"),        // private v4 (alternate Docker compose range)
+        CidrRange.of("192.168.0.0/16"),    // host network in dev mode
+        // ── IPv6 (R6.96-O3) ──
+        CidrRange.of("::1/128"),           // loopback v6 (docker exec into container)
+        CidrRange.of("fd00::/8"),          // ULA v6 (Docker Compose v2 IPv6 bridge default)
+        CidrRange.of("fe80::/10")          // link-local v6
+        // Note: IPv4-mapped IPv6 CIDRs (::ffff:172.16.0.0/104 etc.) are NOT needed
+        // because InetAddress.getByName("::ffff:172.16.0.0") returns a 4-byte IPv4
+        // address in Java, which byte-matches the IPv4 CIDRs above. So the IPv4
+        // entries cover both pure IPv4 AND IPv4-mapped IPv6 inputs.
+    );
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -100,11 +121,108 @@ public class ActuatorIpWhitelistFilter extends OncePerRequestFilter {
         if (ip == null) {
             return false;
         }
-        for (String prefix : WHITELIST_PREFIXES) {
-            if (ip.startsWith(prefix)) {
+        // remoteAddr from servlet API can be a dotted-decimal ("192.168.1.5"),
+        // an IPv6 text form ("0:0:0:0:0:0:0:1" or "::1"), or bracketed
+        // ("[::1]:1234" if port suffix is present). Strip brackets if present.
+        String normalized = ip;
+        if (normalized.startsWith("[") && normalized.contains("]")) {
+            normalized = normalized.substring(1, normalized.indexOf(']'));
+        }
+        InetAddress addr;
+        try {
+            addr = InetAddress.getByName(normalized);
+        } catch (UnknownHostException e) {
+            // UnknownHostException means invalid input — fail-closed.
+            return false;
+        }
+        for (CidrRange range : WHITELIST_CIDRS) {
+            if (range.contains(addr)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * R6.96-O3: minimal CIDR matcher for {@link InetAddress} (supports both
+     * IPv4 and IPv6).
+     *
+     * <p>Stores the network bytes (after applying the mask) and the prefix
+     * length. Match is computed by AND-ing the candidate address bytes with
+     * the network mask and comparing against the stored network.
+     *
+     * <p>Example: {@code CidrRange.of("172.16.0.0/12")} matches {@code 172.16.0.1}
+     * through {@code 172.31.255.255}.
+     */
+    private static final class CidrRange {
+        private final byte[] network;
+        private final int prefixLength;
+
+        static CidrRange of(String cidr) {
+            try {
+                int slash = cidr.indexOf('/');
+                if (slash < 0) {
+                    throw new IllegalArgumentException("CIDR must contain '/': " + cidr);
+                }
+                String addrPart = cidr.substring(0, slash);
+                int prefix = Integer.parseInt(cidr.substring(slash + 1));
+                InetAddress net = InetAddress.getByName(addrPart);
+                byte[] networkBytes = net.getAddress();
+                int maxPrefix = networkBytes.length * 8;
+                if (prefix < 0 || prefix > maxPrefix) {
+                    throw new IllegalArgumentException(
+                        "CIDR prefix " + prefix + " out of range [0, " + maxPrefix + "] for " + cidr);
+                }
+                byte[] masked = applyMask(networkBytes, prefix);
+                return new CidrRange(masked, prefix);
+            } catch (UnknownHostException e) {
+                throw new IllegalArgumentException("Invalid CIDR address: " + cidr, e);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Invalid CIDR prefix length: " + cidr, e);
+            }
+        }
+
+        private CidrRange(byte[] network, int prefixLength) {
+            this.network = network;
+            this.prefixLength = prefixLength;
+        }
+
+        boolean contains(InetAddress addr) {
+            byte[] candidate = addr.getAddress();
+            // Mismatched address families (IPv4 vs IPv6) can never match.
+            if (candidate.length != network.length) {
+                return false;
+            }
+            byte[] masked = applyMask(candidate, prefixLength);
+            for (int i = 0; i < masked.length; i++) {
+                if (masked[i] != network[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Apply a CIDR prefix mask to a byte array. The first {@code prefix / 8}
+         * bytes are kept as-is; the byte at position {@code prefix / 8} has its
+         * upper {@code prefix % 8} bits kept and lower bits zeroed; remaining
+         * bytes are zeroed.
+         */
+        private static byte[] applyMask(byte[] bytes, int prefixLength) {
+            byte[] masked = bytes.clone();
+            int fullBytes = prefixLength / 8;
+            int remainingBits = prefixLength % 8;
+            // Zero bytes AFTER the partial byte (if any).
+            for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < masked.length; i++) {
+                masked[i] = 0;
+            }
+            // Mask the partial byte (if any). e.g. prefixLength=12, fullBytes=1,
+            // remainingBits=4 -> keep upper 4 bits, zero lower 4 bits.
+            if (remainingBits > 0 && fullBytes < masked.length) {
+                int mask = (0xFF << (8 - remainingBits)) & 0xFF;
+                masked[fullBytes] = (byte) (masked[fullBytes] & mask);
+            }
+            return masked;
+        }
     }
 }

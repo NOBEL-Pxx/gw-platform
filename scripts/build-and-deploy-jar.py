@@ -634,6 +634,8 @@ def cmd_deploy(args):
                     #   R6.88:  "R6.88: StaticFileController initialized"
                     #   R6.88:  "R6.88: SearchController initialized"
                     #   R6.88:  "R6.88: ImageCutoutController initialized"
+                    #   R6.96:  "R6.96: ImageCutoutDataSet initialized"
+                    #   R6.96:  "R6.96: ImageCutoutDataSet shutdown complete"
                     v1_markers = [
                         'R6.83: HealthController probe executor initialized',
                         'R6.85b: LlmController RestTemplate initialized',
@@ -641,6 +643,8 @@ def cmd_deploy(args):
                         'R6.88: StaticFileController initialized',
                         'R6.88: SearchController initialized',
                         'R6.88: ImageCutoutController initialized',
+                        'R6.96: ImageCutoutDataSet initialized',
+                        'R6.96: ImageCutoutDataSet shutdown complete',
                     ]
                     markers_found, markers_snippet = z.check_marker_log(
                         REMOTE_CONTAINER,

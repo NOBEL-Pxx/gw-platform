@@ -1325,7 +1325,7 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             source,
             msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers) — refactor missing',
         )
-        # All 6 markers must be present in v1_markers list
+        # All 8 markers must be present in v1_markers list (R6.83 + 2×R6.85b + 3×R6.88 + 2×R6.96)
         for marker in (
             'R6.83: HealthController probe executor initialized',
             'R6.85b: LlmController RestTemplate initialized',
@@ -1333,10 +1333,12 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             'R6.88: StaticFileController initialized',
             'R6.88: SearchController initialized',
             'R6.88: ImageCutoutController initialized',
+            'R6.96: ImageCutoutDataSet initialized',
+            'R6.96: ImageCutoutDataSet shutdown complete',
         ):
             self.assertIn(
                 marker, source,
-                msg=f'cmd_deploy must check marker {marker!r} — R6.85b+R6.88 AND-check incomplete',
+                msg=f'cmd_deploy must check marker {marker!r} — R6.85b+R6.88+R6.96 AND-check incomplete',
             )
 
 
