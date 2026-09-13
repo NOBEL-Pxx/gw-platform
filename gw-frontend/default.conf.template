@@ -33,8 +33,13 @@ map $http_origin $cors_origin {
 #  HTTPS SERVER (port 443 → mapped to 6002)
 # ═══════════════════════════════════════════════════════════════════════════
 server {
-    listen       443 ssl http2;
-    server_name  localhost;
+    # R6.99-E: default_server + IPv6 + production server_name.
+    # 6002 IP-direct (Host: 10.107.207.103) needs `default_server` because
+    # `server_name _` matches Host headers but not bare IP per [[r698-nginx-default-server-iron-rule]].
+    # `alicpt.lhr.life` is the canonical prod domain; `_` is catch-all for unknown hosts.
+    listen       443 ssl http2 default_server;
+    listen  [::]:443 ssl http2 default_server;
+    server_name  alicpt.lhr.life _ localhost;
 
     ssl_certificate     /etc/nginx/ssl/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
