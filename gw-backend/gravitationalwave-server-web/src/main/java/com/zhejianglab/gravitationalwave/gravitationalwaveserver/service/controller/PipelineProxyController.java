@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -44,6 +44,16 @@ import jakarta.annotation.PreDestroy;
  * R6.66.2 motivation: Without this proxy, gw-backend returns 500
  * "No static resource api/audit" for /api/audit, even though gw-pipeline container
  * owns the audit endpoint. Auth: callers must present a valid Bearer JWT.
+ *
+ * <p><b>R6.98-C migration</b>: replaced {@code RestTemplate} with the shared
+ * {@link RestClient} bean from {@code HttpClientConfig}. Iron rule R6.98-A:
+ * all outbound HTTP MUST use the shared {@code CloseableHttpClient} bean via
+ * {@link RestClient} -- no ad-hoc {@code new RestTemplate()} per-service.
+ *
+ * <p><b>R6.98-C streaming cap</b>: response bodies larger than {@value #STREAMING_CAP_BYTES}
+ * bytes (1 MiB) are aborted with HTTP 413 Payload Too Large. Mirrors the
+ * R6.96-O6 download endpoint cap. Closes the DoS surface where a single
+ * proxy request could otherwise stream a multi-GB FITS/ZIP into JVM heap.
  */
 @RestController
 @RequestMapping("/pipeline")
@@ -54,8 +64,11 @@ public class PipelineProxyController {
     /** Upstream URL. gw-pipeline is the Docker service name on gw-net. */
     private static final String UPSTREAM = "http://gw-pipeline:8200";
 
-    /** Request timeout in milliseconds. */
-    private static final int TIMEOUT_MS = 30000;
+    /**
+     * R6.98-C: streaming OOM guard cap. Any response body larger than this
+     * triggers HTTP 413 Payload Too Large. Matches R6.96-O6 download cap.
+     */
+    private static final int STREAMING_CAP_BYTES = 1024 * 1024; // 1 MiB
 
     /**
      * R6.73 #2: Allowlist of hosts permitted to call this proxy.
@@ -70,36 +83,38 @@ public class PipelineProxyController {
 
     private Set<String> allowedUpstreamHosts;
 
-    private final RestTemplate restTemplate;
+    /**
+     * R6.98-C: shared {@link RestClient} bean (from {@code HttpClientConfig}).
+     * Replaces the per-instance {@code RestTemplate} previously constructed
+     * in this controller's constructor (R6.85b). Spring auto-injects from
+     * the {@code sharedRestClient} bean.
+     */
+    private final RestClient restClient;
 
-    public PipelineProxyController() {
-        this.restTemplate = new RestTemplate();
-        // R6.85b: timeout config moved to initRestTemplate() @PostConstruct for consistency
-        // with R6.83 HealthController pattern. This constructor stays minimal.
+    /**
+     * R6.98-C: constructor injection of shared {@link RestClient} bean.
+     * Replaces the prior {@code new RestTemplate()} pattern (R6.85b).
+     */
+    public PipelineProxyController(RestClient sharedRestClient) {
+        this.restClient = sharedRestClient;
     }
 
     /**
-     * R6.85b: configure RestTemplate timeouts (R6.83-C iron rule).
-     * gw-pipeline is local Docker DNS — 30s is generous; production could trim to 10s.
+     * R6.85b log marker preserved (now confirms RestClient wiring, not
+     * RestTemplate timeouts -- those are governed by the shared pool).
      */
     @PostConstruct
     void initRestTemplate() {
-        ((org.springframework.http.client.SimpleClientHttpRequestFactory)
-            this.restTemplate.getRequestFactory())
-            .setConnectTimeout(TIMEOUT_MS);
-        ((org.springframework.http.client.SimpleClientHttpRequestFactory)
-            this.restTemplate.getRequestFactory())
-            .setReadTimeout(TIMEOUT_MS);
-        log.info("R6.85b: PipelineProxyController RestTemplate initialized (connect=30s, read=30s)");
+        log.info("R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)");
     }
 
     /**
-     * R6.85b: R6.83-A iron rule — clean up RestTemplate on bean destruction.
+     * R6.85b: R6.83-A iron rule — clean up log marker on bean destruction.
+     * The shared RestClient is owned by HttpClientConfig (close() on its
+     * CloseableHttpClient), so this controller does not own lifecycle.
      */
     @PreDestroy
     void shutdownRestTemplate() {
-        // SimpleClientHttpRequestFactory uses HttpURLConnection per request (auto-closed).
-        // Emit audit log so post-deploy V1 marker check can confirm R6.85b bytecode is live.
         log.info("R6.85b: PipelineProxyController shutdown complete");
     }
 
@@ -171,8 +186,8 @@ public class PipelineProxyController {
 
     private ResponseEntity<byte[]> forward(HttpMethod method, HttpServletRequest req) throws IOException {
         // R6.85b R6.83-D iron rule: null-guard against @PostConstruct failure.
-        if (restTemplate == null) {
-            log.error("[proxy] {} {} -> restTemplate not initialized (503)", method, req.getRequestURI());
+        if (restClient == null) {
+            log.error("[proxy] {} {} -> restClient not initialized (503)", method, req.getRequestURI());
             byte[] errBody = "{\"error\":\"proxy not initialized\"}".getBytes(StandardCharsets.UTF_8);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Content-Type", "application/json")
@@ -203,13 +218,40 @@ public class PipelineProxyController {
         HttpHeaders headers = copyHeaders(req);
         byte[] body = readBody(req);
 
-        HttpEntity<byte[]> entity = new HttpEntity<>(body, headers);
-
         try {
             log.info("[proxy] {} {} -> {} (body={}B)", method, fullPath, url, body.length);
-            ResponseEntity<byte[]> resp = restTemplate.exchange(
-                url, method, entity, byte[].class
-            );
+
+            // R6.98-C: RestClient builder pattern. Use the method-specific
+            // shortcut (restClient.get(), .post(), etc.) to avoid passing
+            // null body, which causes an NPE inside RestClient's body converter
+            // (it calls body.getClass() unconditionally).
+            RestClient.RequestBodySpec spec = restClient
+                    .method(method)
+                    .uri(url)
+                    .headers(h -> h.addAll(headers));
+            if (body.length > 0) {
+                spec.body(body);
+            }
+
+            ResponseEntity<byte[]> resp = spec
+                    .retrieve()
+                    .onStatus(s -> true, (request, response) -> {}) // never throw on status; we handle 4xx/5xx below
+                    .toEntity(byte[].class);
+
+            // R6.98-C: streaming OOM guard. Abort with 413 if upstream returned
+            // a body larger than STREAMING_CAP_BYTES. Mirrors R6.96-O6 download cap.
+            if (resp.getBody() != null && resp.getBody().length > STREAMING_CAP_BYTES) {
+                long oversized = resp.getBody().length;
+                log.warn("[proxy] R6.98-C STREAMING CAP {} {} -> {} (size={}B > cap={}B, returning 413)",
+                        method, fullPath, url, oversized, STREAMING_CAP_BYTES);
+                byte[] errBody = ("{\"error\":\"payload too large (R6.98-C streaming cap)\","
+                        + "\"cap_bytes\":" + STREAMING_CAP_BYTES
+                        + ",\"received_bytes\":" + oversized + "}").getBytes(StandardCharsets.UTF_8);
+                return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                        .header("Content-Type", "application/json")
+                        .body(errBody);
+            }
+
             log.info("[proxy] {} {} -> {} (resp={}B, status={})",
                 method, fullPath, url,
                 resp.getBody() == null ? 0 : resp.getBody().length,
