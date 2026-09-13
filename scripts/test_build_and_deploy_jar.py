@@ -1220,39 +1220,39 @@ class TestV1MarkerCheck(unittest.TestCase):
         """Multi-marker mode: list of strings, AND check (all must be present)."""
         z = self._make_z((
             'INFO  R6.83: HealthController probe executor initialized\n'
-            'INFO  R6.85b: LlmController RestTemplate initialized\n'
-            'INFO  R6.85b: PipelineProxyController RestTemplate initialized\n',
+            'INFO  R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)\n'
+            'INFO  R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)\n',
             0,
         ))
         markers = [
             'R6.83: HealthController probe executor initialized',
-            'R6.85b: LlmController RestTemplate initialized',
-            'R6.85b: PipelineProxyController RestTemplate initialized',
+            'R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)',
+            'R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)',
         ]
         found, snippet = z.check_marker_log('divs-backend', markers)
         self.assertTrue(found)
-        self.assertIn('R6.85b: LlmController', snippet)
-        self.assertIn('R6.85b: PipelineProxyController', snippet)
+        self.assertIn('R6.98-D: LlmController', snippet)
+        self.assertIn('R6.98: PipelineProxyController', snippet)
 
     def test_supports_list_of_markers_partial_present(self):
         """Multi-marker mode: if ANY marker missing, returns False (AND check)."""
         z = self._make_z((
             'INFO  R6.83: HealthController probe executor initialized\n'
-            # R6.85b LlmController line is missing
-            'INFO  R6.85b: PipelineProxyController RestTemplate initialized\n',
+            # R6.98-D LlmController line is missing
+            'INFO  R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)\n',
             0,
         ))
         markers = [
             'R6.83: HealthController probe executor initialized',
-            'R6.85b: LlmController RestTemplate initialized',
-            'R6.85b: PipelineProxyController RestTemplate initialized',
+            'R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)',
+            'R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)',
         ]
         found, snippet = z.check_marker_log('divs-backend', markers)
         self.assertFalse(found)
         # Snippet shows what IS present so caller can see which is missing.
         self.assertIn('R6.83: HealthController', snippet)
-        self.assertIn('R6.85b: PipelineProxyController', snippet)
-        self.assertNotIn('R6.85b: LlmController', snippet)
+        self.assertIn('R6.98: PipelineProxyController', snippet)
+        self.assertNotIn('R6.98-D: LlmController', snippet)
 
     def test_uses_substring_match(self):
         """Helper does substring matching, not regex — special chars in marker are literal."""
@@ -1308,11 +1308,13 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
     def test_cmd_deploy_calls_check_marker_log_with_all_markers(self):
         """Refactored cmd_deploy invokes z.check_marker_log with the 12-marker AND-check.
 
-        R6.85b added 2 more markers (LlmController + PipelineProxyController RestTemplate
-        init). R6.88 added 3 more (StaticFileController + SearchController + ImageCutoutController
-        R6.85-A application). R6.96 added 2 more (ImageCutoutDataSet init/shutdown).
-        R6.98 added 4 more (HttpClientConfig init + TLS pinning api.deepseek.com +
-        TLS pinning hips.china-vo.org + DNS resolver pinned china-vo.org).
+        R6.85b historically added 2 markers (LlmController + PipelineProxyController
+        RestTemplate init). R6.88 added 3 more (StaticFileController + SearchController
+        + ImageCutoutController R6.85-A application). R6.96 added 2 more (ImageCutoutDataSet
+        init/shutdown). R6.98 added 4 more (HttpClientConfig init + TLS pinning
+        api.deepseek.com + TLS pinning hips.china-vo.org + DNS resolver pinned china-vo.org).
+        In R6.98 Phase C/D/E, the 4 R6.85b/R6.96 markers were RENAMED when their classes
+        migrated RestTemplate -> RestClient (see marker-renames note above).
         The check must now be a list of 12 markers passed to check_marker_log so that an
         mvn build without -am (R6.80 lesson) fails the AND-check rather than silently
         shipping stale bytecode.
@@ -1342,16 +1344,27 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             source, pattern_re,
             msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers, [kwargs]) — refactor missing',
         )
-        # All 12 markers must be present in v1_markers list (R6.83 + 2×R6.85b + 3×R6.88 + 2×R6.96 + 4×R6.98)
+        # All 12 markers must be present in v1_markers list. As of R6.98 Phase E
+        # (commit fc06c50), the legacy R6.85b / R6.96 markers were RENAMED when their
+        # classes migrated from RestTemplate to RestClient:
+        #   - LlmController:        R6.85b: LlmController RestTemplate initialized
+        #                         -> R6.98-D: LlmController RestClient initialized
+        #   - PipelineProxyController: R6.85b: PipelineProxyController RestTemplate initialized
+        #                          -> R6.98:  PipelineProxyController RestClient initialized
+        #   - ImageCutoutDataSet:   R6.96: ImageCutoutDataSet initialized / shutdown complete
+        #                         -> R6.98-D: ImageCutoutDataSet initialized / shutdown complete
+        # Net markers: R6.83 (1) + R6.88 (3) + R6.98-D Llm/PipelineProxy/ImageCutoutDataSet (3)
+        #            + R6.98 HttpClientConfig (1) + 2 TOFU-conditional TLS + 1 DNS pinning = 11
+        # Wait: marker count is 12 because R6.96 added init AND shutdown as 2 markers.
         for marker in (
             'R6.83: HealthController probe executor initialized',
-            'R6.85b: LlmController RestTemplate initialized',
-            'R6.85b: PipelineProxyController RestTemplate initialized',
+            'R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)',
+            'R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)',
             'R6.88: StaticFileController initialized',
             'R6.88: SearchController initialized',
             'R6.88: ImageCutoutController initialized',
-            'R6.96: ImageCutoutDataSet initialized',
-            'R6.96: ImageCutoutDataSet shutdown complete',
+            'R6.98-D: ImageCutoutDataSet initialized (TLS pinned china-vo.org, DNS resolver pinned)',
+            'R6.98-D: ImageCutoutDataSet shutdown complete',
             # R6.98 Phase F: 4 new markers (see [[r698-summary]] §"V1 marker extension").
             # The 2 TLS pinning markers are conditional on TOFU env vars;
             # the test only verifies the list contains them (the runtime emit
@@ -1363,7 +1376,7 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
         ):
             self.assertIn(
                 marker, source,
-                msg=f'cmd_deploy must check marker {marker!r} — R6.85b+R6.88+R6.96 AND-check incomplete',
+                msg=f'cmd_deploy must check marker {marker!r} — R6.83+R6.88+R6.98 AND-check incomplete (post-Phase-E marker set)',
             )
 
     def test_r697b_widens_marker_log_window(self):

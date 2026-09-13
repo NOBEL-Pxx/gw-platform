@@ -629,13 +629,13 @@ def cmd_deploy(args):
                     # all 6 controller classes existed before their respective marker log lines were added.
                     # Marker lines emitted by @PostConstruct methods:
                     #   R6.83:  "R6.83: HealthController probe executor initialized (2 threads, daemon=true)"
-                    #   R6.85b: "R6.85b: LlmController RestTemplate initialized (connect=10s, read=30s)"
-                    #   R6.85b: "R6.85b: PipelineProxyController RestTemplate initialized (connect=30s, read=30s)"
+                    #   R6.98-D: "R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)"
+                    #   R6.98:  "R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)"
                     #   R6.88:  "R6.88: StaticFileController initialized"
                     #   R6.88:  "R6.88: SearchController initialized"
                     #   R6.88:  "R6.88: ImageCutoutController initialized"
-                    #   R6.96:  "R6.96: ImageCutoutDataSet initialized"
-                    #   R6.96:  "R6.96: ImageCutoutDataSet shutdown complete"
+                    #   R6.98-D: "R6.98-D: ImageCutoutDataSet initialized (TLS pinned china-vo.org, DNS resolver pinned)"
+                    #   R6.98-D: "R6.98-D: ImageCutoutDataSet shutdown complete"
                     # R6.98:  "R6.98: HttpClientConfig initialized" (Phase 1+2 infra)
                     # R6.98:  "R6.98: TLS pinning active for api.deepseek.com (cert SHA-256: <hex>)"
                     #         (Phase D; conditional on deepseek.api.pinned-cert-sha256 env var)
@@ -645,13 +645,13 @@ def cmd_deploy(args):
                     #         (Phase E; unconditional; ChinaVoDnsResolver.forHipsChinaVoOrg)
                     v1_markers = [
                         'R6.83: HealthController probe executor initialized',
-                        'R6.85b: LlmController RestTemplate initialized',
-                        'R6.85b: PipelineProxyController RestTemplate initialized',
+                        'R6.98-D: LlmController RestClient initialized (dedicated bean for api.deepseek.com)',
+                        'R6.98: PipelineProxyController RestClient initialized (cap=1MiB, shared client connect=10000ms/response=30000ms)',
                         'R6.88: StaticFileController initialized',
                         'R6.88: SearchController initialized',
                         'R6.88: ImageCutoutController initialized',
-                        'R6.96: ImageCutoutDataSet initialized',
-                        'R6.96: ImageCutoutDataSet shutdown complete',
+                        'R6.98-D: ImageCutoutDataSet initialized (TLS pinned china-vo.org, DNS resolver pinned)',
+                        'R6.98-D: ImageCutoutDataSet shutdown complete',
                         'R6.98: HttpClientConfig initialized',                       # R6.98 Phase 1+2 (unconditional)
                         'R6.98: TLS pinning active for api.deepseek.com',            # R6.98 Phase D (TOFU-conditional)
                         'R6.98: TLS pinning active for hips.china-vo.org',          # R6.98 Phase E (TOFU-conditional)
@@ -684,14 +684,19 @@ def cmd_deploy(args):
                         missing = [m for m in v1_markers if m not in markers_snippet]
                         print(f'  [WARN V1] {len(missing)}/{len(v1_markers)} marker(s) NOT found in container logs.')
                         print(f'           Missing: {missing}')
-                        # R6.98 Phase F: hint updated for the 12-marker check.
-                        print('           If you are deploying R6.83+85b+88+96+98 and any marker is missing,')
+                        # R6.98 (post-Phase E): hint reflects the marker rename.
+                        # LlmController + PipelineProxyController + ImageCutoutDataSet markers
+                        # were RENAMED when RestTemplate -> RestClient migration landed in
+                        # R6.98 Phases C / D / E. Pre-Phase-D jars emit the OLD R6.85b /
+                        # R6.96 markers; post-Phase-E jars emit the NEW R6.98-D / R6.98
+                        # markers. Phase F is the v1_markers list update to track them.
+                        print('           If you are deploying R6.83+88+98 and any marker is missing,')
                         print('           the jar has stale bytecode. Check: did mvn run with -am flag?')
                         print('           Pre-R6.83 jars (no marker) are valid; post-R6.83 jars MUST emit R6.83 line.')
-                        print('           Post-R6.85b jars MUST emit both R6.85b lines.')
                         print('           Post-R6.88 jars MUST emit all 3 R6.88 lines.')
-                        print('           Post-R6.96 jars MUST emit both R6.96 lines.')
-                        print('           Post-R6.98 jars MUST emit the R6.98 HttpClientConfig line.')
+                        print('           Post-R6.98 jars MUST emit the R6.98 HttpClientConfig line')
+                        print('             + R6.98-D LlmController / PipelineProxyController / ImageCutoutDataSet lines')
+                        print('             + R6.98-D DNS resolver pinned line (hips.china-vo.org).')
                         print('           The 2 TLS pinning markers (api.deepseek.com + hips.china-vo.org)')
                         print('           are conditional on TOFU env vars:')
                         print('             deepseek.api.pinned-cert-sha256  (R6.98 Phase D)')
