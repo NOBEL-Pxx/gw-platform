@@ -11,6 +11,7 @@ import org.apache.hc.core5.util.TimeValue;
 import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
@@ -31,11 +32,14 @@ import org.springframework.web.client.RestClient;
  *       Requires Apache HttpClient {@code DnsResolver} override.</li>
  * </ul>
  *
- * <p><b>Phase 1+2 scope (this file)</b>: infrastructure only. Beans are registered
- * but no consumer exists yet. Behavior change: zero. Future R6.98 Phase 3+
- * migrations will switch individual consumers (ImageCutoutDataSet, AuditService,
- * LlmController, PipelineProxyController) from {@code RestTemplate} to the
- * {@code RestClient} bean exposed here.
+ * <p><b>Phase 1+2 scope</b>: shared {@code CloseableHttpClient} + {@code RestClient}
+ * beans (general-purpose). Behavior change: zero.
+ *
+ * <p><b>R6.98-D</b>: dedicated {@code llmRestClient} bean for the LLM channel
+ * (api.deepseek.com). Uses {@link TlsPinningHttpClientFactory} when
+ * {@code deepseek.api.pinned-cert-sha256} is configured; otherwise falls back
+ * to the shared client with a clear log warning. Isolation: TLS pinning for
+ * api.deepseek.com MUST NOT bleed into other consumers (china-vo.org etc.).
  *
  * <p><b>Coexistence with HttpClient 4.x</b>: Elasticsearch low-level RestClient
  * uses {@code org.apache.http.*} (4.x); this bean uses {@code org.apache.hc.client5.*}
@@ -43,18 +47,24 @@ import org.springframework.web.client.RestClient;
  *
  * <p><b>Iron rules established here</b>:
  * <ul>
- *   <li><b>R6.98-A</b> (correctness): All outbound HTTP MUST use the shared
+ *   <li><b>R6.98-A</b>: all outbound HTTP MUST use the shared
  *       {@code CloseableHttpClient} bean via {@code RestClient} -- no ad-hoc
- *       {@code HttpClients.createDefault()} inside service methods (avoids
- *       per-call connection pool allocation + connection leaks).</li>
- *   <li><b>R6.98-B</b> (perf): max total connections = 100, max per-route = 20.
- *       Matches ElasticsearchConfig defaults. Sized for china-vo.org (3 cutout
- *       endpoints) + api.deepseek.com (1 endpoint) traffic pattern.</li>
+ *       {@code HttpClients.createDefault()} inside service methods.</li>
+ *   <li><b>R6.98-B</b>: max total connections = 100, max per-route = 20.
+ *       Matches ElasticsearchConfig defaults.</li>
+ *   <li><b>R6.98-D</b>: TLS pinning for outbound HTTPS to third-party services
+ *       MUST go through a dedicated pinned {@code CloseableHttpClient}. The
+ *       dedicated {@code llmRestClient} bean is wired via
+ *       {@link TlsPinningHttpClientFactory} when a pinned SHA-256 is configured.</li>
  * </ul>
  *
- * <p><b>V1 marker</b>: {@code "R6.98: HttpClientConfig initialized"} logged at
- * {@code @PostConstruct} -- confirms bean construction at container startup;
- * searchable in container logs via {@code zsmoke check_marker_log}.
+ * <p><b>V1 markers</b>:
+ * <ul>
+ *   <li>{@code "R6.98: HttpClientConfig initialized"} — bean construction.</li>
+ *   <li>{@code "R6.98: TLS pinning active for api.deepseek.com (cert SHA-256: <hex>)"}
+ *       — logged by {@link TlsPinningHttpClientFactory#build(String, String)}
+ *       when the dedicated LLM client is built with pinning enabled.</li>
+ * </ul>
  */
 @Configuration
 public class HttpClientConfig {
@@ -106,12 +116,55 @@ public class HttpClientConfig {
     /**
      * Spring's modern {@code RestClient} wrapper around the shared HttpClient 5.
      * Provides builder-pattern API + auto-content-type negotiation. Replaces
-     * legacy {@code RestTemplate} for future R6.98 migrations.
+     * legacy {@code RestTemplate} for R6.98 Phase 3+ migrations.
      */
     @Bean
     public RestClient sharedRestClient(CloseableHttpClient httpClient) {
         return RestClient.builder()
                 .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+                .build();
+    }
+
+    /**
+     * R6.98-D: dedicated {@link RestClient} bean for the LLM channel
+     * (api.deepseek.com).
+     *
+     * <p>Uses {@link TlsPinningHttpClientFactory} to build a {@link CloseableHttpClient}
+     * whose {@code SSLContext} enforces SPKI SHA-256 pinning for api.deepseek.com.
+     * If {@code deepseek.api.pinned-cert-sha256} is not configured (TOFU
+     * capture pending on first deploy), falls back to the shared client with
+     * a clear log warning so dev mode still works.
+     *
+     * <p>Why a dedicated bean (not shared)?
+     * <ul>
+     *   <li>TLS pinning for api.deepseek.com must NOT bleed into other consumers.</li>
+     *   <li>The pinned client's connection pool is logically separate from the
+     *       general shared pool.</li>
+     *   <li>Future per-host overrides (DNS pinning for china-vo.org, etc.) plug
+     *       in here as additional dedicated beans without touching the shared one.</li>
+     * </ul>
+     *
+     * @param httpClient The shared {@link CloseableHttpClient} (used as fallback
+     *                   when pinning is not yet configured).
+     * @param pinnedCertSha256 SHA-256 SPKI fingerprint for api.deepseek.com. If
+     *                        blank, the bean falls back to the shared client.
+     */
+    @Bean
+    public RestClient llmRestClient(
+            CloseableHttpClient httpClient,
+            @Value("${deepseek.api.pinned-cert-sha256:}") String pinnedCertSha256) {
+        if (pinnedCertSha256 == null || pinnedCertSha256.isBlank()) {
+            log.warn("R6.98-D: deepseek.api.pinned-cert-sha256 not configured; "
+                    + "llmRestClient falling back to sharedRestClient WITHOUT TLS pinning "
+                    + "(dev mode — capture cert SHA-256 on first prod deploy)");
+            return RestClient.builder()
+                    .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+                    .build();
+        }
+        CloseableHttpClient pinned = TlsPinningHttpClientFactory.build(
+                pinnedCertSha256, "api.deepseek.com");
+        return RestClient.builder()
+                .requestFactory(new HttpComponentsClientHttpRequestFactory(pinned))
                 .build();
     }
 }
