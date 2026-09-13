@@ -62,5 +62,13 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
+
+        <!-- R6.98-A: Apache HttpClient 5.x — shared CloseableHttpClient + RestClient
+             bean for outbound calls (AuditService, LlmController, PipelineProxyController
+             will migrate from RestTemplate to RestClient in R6.98 Phase 3+). -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
     </dependencies>
 </project>
