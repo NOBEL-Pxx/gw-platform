@@ -4,16 +4,12 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -40,6 +36,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * The endpoint contract (see gw-pipeline routes_v437.py:audit_ingest):
  *   body must be a JSON object; arbitrary keys accepted.
  *   Pipeline defaults: source=backend, ingested_ts=now (ISO 8601).
+ *
+ * <p><b>R6.98-B migration</b>: replaced {@code RestTemplate} with the shared
+ * {@link RestClient} bean from {@code HttpClientConfig}. Iron rule R6.98-A:
+ * all outbound HTTP MUST use the shared {@code CloseableHttpClient} bean via
+ * {@link RestClient} -- no ad-hoc {@code new RestTemplate()} per-service.
  */
 @Service
 public class AuditService {
@@ -58,7 +59,13 @@ public class AuditService {
     @Value("${backend.audit.timeout-ms:3000}")
     private int timeoutMs;
 
-    private final RestTemplate restTemplate;
+    /**
+     * R6.98-B: shared {@link RestClient} bean (from {@code HttpClientConfig}).
+     * Replaces the per-instance {@code RestTemplate} previously constructed
+     * in this service's constructor. Spring auto-injects from the
+     * {@code sharedRestClient} bean.
+     */
+    private final RestClient restClient;
 
     /** Records dropped because BACKEND_AUDIT_TOKEN is not configured. */
     private final AtomicLong droppedDisabled = new AtomicLong(0);
@@ -67,25 +74,28 @@ public class AuditService {
     /** Records accepted by the pipeline (HTTP 2xx response). */
     private final AtomicLong sentOk = new AtomicLong(0);
 
-    public AuditService() {
-        // RestTemplate and its request factory are constructed here; timeout
-        // values are bound from @Value AFTER this constructor returns, so we
-        // apply them in init() (a @PostConstruct method below).
-        this.restTemplate = new RestTemplate();
+    /**
+     * R6.98-B: constructor injection of shared {@link RestClient} bean.
+     * Replaces the prior {@code new RestTemplate()} pattern (R6.85b).
+     */
+    public AuditService(RestClient sharedRestClient) {
+        this.restClient = sharedRestClient;
     }
 
     @PostConstruct
     public void init() {
-        // Apply timeouts now that @Value fields have been injected.
-        SimpleClientHttpRequestFactory rf =
-                (SimpleClientHttpRequestFactory) this.restTemplate.getRequestFactory();
-        rf.setConnectTimeout(timeoutMs);
-        rf.setReadTimeout(timeoutMs);
+        // The shared RestClient has timeouts configured at the HttpClient
+        // level (connect=10s, response=30s per HttpClientConfig). The audit
+        // endpoint is fire-and-forget so its inherent timeouts are acceptable.
+        // The legacy {@code backend.audit.timeout-ms} setting is preserved
+        // for backward compatibility (audit ops may reference it in runbooks)
+        // but no longer applied per-call -- the shared pool governs.
 
         if (auditToken == null || auditToken.isEmpty()) {
             log.warn("[AuditService] backend.audit.token is EMPTY - audit ingest is DISABLED (fail-closed)");
         } else {
-            log.info("[AuditService] audit ingest enabled -> {} (timeout={}ms)", auditUrl, timeoutMs);
+            log.info("[AuditService] audit ingest enabled -> {} (timeoutMs config={}ms; shared client connect=10000ms/response=30000ms)",
+                    auditUrl, timeoutMs);
         }
     }
 
@@ -124,19 +134,17 @@ public class AuditService {
         // Mark source = backend so downstream consumers can filter.
         body.put("source", "backend");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Audit-Token", auditToken);
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(
-                    auditUrl, HttpMethod.POST, entity, String.class);
+            restClient.post()
+                    .uri(auditUrl)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .header("X-Audit-Token", auditToken)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
             sentOk.incrementAndGet();
             if (log.isDebugEnabled()) {
-                log.debug("[AuditService] {} {} -> {} (status={})",
-                        method, uri, auditUrl, resp.getStatusCode());
+                log.debug("[AuditService] {} {} -> {} (sent_ok)", method, uri, auditUrl);
             }
         } catch (HttpStatusCodeException e) {
             long n = droppedFailed.incrementAndGet();
