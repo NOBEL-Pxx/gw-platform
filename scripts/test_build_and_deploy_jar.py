@@ -1306,24 +1306,35 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
     """
 
     def test_cmd_deploy_calls_check_marker_log_with_all_markers(self):
-        """Refactored cmd_deploy invokes z.check_marker_log with the 6-marker AND-check.
+        """Refactored cmd_deploy invokes z.check_marker_log with the 8-marker AND-check.
 
         R6.85b added 2 more markers (LlmController + PipelineProxyController RestTemplate
         init). R6.88 added 3 more (StaticFileController + SearchController + ImageCutoutController
-        R6.85-A application). The check must now be a list of 6 markers passed to check_marker_log
-        so that an mvn build without -am (R6.80 lesson) fails the AND-check rather than silently
-        shipping stale bytecode.
+        R6.85-A application). R6.96 added 2 more (ImageCutoutDataSet init/shutdown). The check
+        must now be a list of 8 markers passed to check_marker_log so that an mvn build
+        without -am (R6.80 lesson) fails the AND-check rather than silently shipping stale
+        bytecode.
+
+        R6.97-B widened the log window (since='5m', timeout=20) to fix a cold-start
+        false-negative (see [[r696-summary]]). The assertion below accepts the new kwargs
+        by using a regex instead of a literal-string match — a future regression that
+        drops the kwargs will be caught by `test_r697b_widens_marker_log_window`.
         """
         source = Path(SCRIPT_PATH).read_text(encoding='utf-8')
-        # The refactored lines use z.check_marker_log(REMOTE_CONTAINER, v1_markers)
-        # where v1_markers is a 6-element list of R6.83 + R6.85b + R6.88 markers.
-        self.assertIn(
-            'markers_found, markers_snippet = z.check_marker_log(\n'
-            '                        REMOTE_CONTAINER,\n'
-            '                        v1_markers,\n'
-            '                    )',
-            source,
-            msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers) — refactor missing',
+        import re
+        # Match the call signature allowing optional kwargs between v1_markers and `)`.
+        pattern_re = (
+            r'markers_found,\s*markers_snippet\s*=\s*z\.check_marker_log\(\s*'
+            r'REMOTE_CONTAINER,\s*'
+            r'v1_markers,\s*'
+            r'(?:#[^\n]*\n\s*)*'  # optional comment block
+            r'(?:since\s*=\s*[\'"][^\'"]+[\'"],\s*)?'  # optional since='5m'
+            r'(?:timeout\s*=\s*\d+,\s*)?'  # optional timeout=20
+            r'\)'
+        )
+        self.assertRegex(
+            source, pattern_re,
+            msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers, [kwargs]) — refactor missing',
         )
         # All 8 markers must be present in v1_markers list (R6.83 + 2×R6.85b + 3×R6.88 + 2×R6.96)
         for marker in (
@@ -1340,6 +1351,33 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
                 marker, source,
                 msg=f'cmd_deploy must check marker {marker!r} — R6.85b+R6.88+R6.96 AND-check incomplete',
             )
+
+    def test_r697b_widens_marker_log_window(self):
+        """R6.97-B: check_marker_log call must pass since='5m' (or wider).
+
+        Pre-R6.97 the call used the helper's default since='30s', which caused
+        false-negatives on cold-start deploys (the @PostConstruct marker emission
+        lands asynchronously, sometimes >30s after `docker restart`). See
+        [[r696-summary]] §post-deploy verify for the original incident.
+
+        NOTE: we intentionally don't try to extract the kwargs out of the call
+        signature — a naive regex `(.*?)` ends at the first `)` inside a comment
+        containing `(especially on cold-start...)`. Instead we just assert the
+        presence of a non-30s `since=` kwarg in the source — there is exactly one
+        such call site in the script.
+        """
+        source = Path(SCRIPT_PATH).read_text(encoding='utf-8')
+        import re
+        # Look for any since='<value>' kwarg in the script. The marker check is
+        # the only call site, so any since= here must be the R6.97-B widening.
+        all_since = re.findall(r"since\s*=\s*['\"]([^'\"]+)['\"]", source)
+        self.assertTrue(len(all_since) >= 1,
+            msg='check_marker_log call must pass since= kwarg (R6.97-B widening). '
+                'No since= kwarg found anywhere in the script.')
+        # The widened value must NOT be the pre-R6.97 default of '30s'
+        self.assertNotIn('30s', all_since,
+            msg='since=30s is the pre-R6.97 default — false-negative on cold start; '
+                'must be wider (e.g. since=5m). See [[r696-summary]]')
 
 
 class TestR686CurlProbeFix(unittest.TestCase):
@@ -1461,6 +1499,139 @@ class TestR686CurlProbeFix(unittest.TestCase):
             'busybox',
             self.source,
             msg='R6.86-A rationale must mention busybox (the root cause)')
+
+
+class TestR697BCurlProbeFixCmdRollbackCmdVerify(unittest.TestCase):
+    """R6.97-B: extend the R6.86-A iron rule to cmd_rollback + cmd_verify.
+
+    R6.86-A fixed cmd_deploy's wait-for-UP probe (curl -> wget). R6.97-B extends
+    the same fix to the two remaining sites that used curl:
+      - cmd_rollback (line 818): wait-for-UP loop after `docker restart`. Pre-R6.97-B
+        used `docker exec ... curl -sf -m 5` which always returned exit 126 (curl not
+        found in busybox), falsely reporting rollback failure.
+      - cmd_verify (line 871): health-endpoint probe across /api/health +
+        /actuator/health + /v3/api-docs. Pre-R6.97-B used curl with `-w "\\nHTTP=..."`
+        for HTTP code extraction. R6.97-B replaces with wget (exits 0 on 2xx,
+        exit 8 on 4xx/5xx) and parses "status":"UP" substring for the /api/health
+        check.
+      - cmd_rollback's diagnose hint (line 842): also suggests curl to operator
+        on timeout. R6.97-B replaces with wget.
+
+    Pinning these tests ensures a future maintainer who copy-pastes from the
+    pre-R6.97-B source cannot silently re-introduce curl in cmd_rollback or
+    cmd_verify.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        cls.source_path = Path(r'D:\AliCPT\scripts\build-and-deploy-jar.py')
+        cls.source = cls.source_path.read_text(encoding='utf-8')
+
+    def _section(self, marker_start, marker_end=None):
+        s = self.source.find(marker_start)
+        if s < 0:
+            self.fail(f'Could not locate section starting with: {marker_start!r}')
+        e = self.source.find(marker_end, s) if marker_end else len(self.source)
+        return self.source[s:e]
+
+    def _cmd_rollback_section(self) -> str:
+        """Extract the cmd_rollback wait-for-UP loop + diagnose section."""
+        return self._section('def cmd_rollback(', 'def cmd_verify(')
+
+    def _cmd_verify_section(self) -> str:
+        """Extract the cmd_verify function body."""
+        return self._section('def cmd_verify(', 'def cmd_all(')
+
+    def test_cmd_rollback_probe_uses_wget_not_curl(self):
+        """cmd_rollback wait-for-UP probe must use wget, not curl.
+
+        Functional code (non-comment) inside cmd_rollback that runs
+        `docker exec ... <tool>` for the health probe must use wget.
+        """
+        section = self._cmd_rollback_section()
+        for line in section.splitlines():
+            stripped = line.strip()
+            # Skip pure comment lines (rationale explanations reference curl)
+            if stripped.startswith('#'):
+                continue
+            # Code line with docker exec must use wget, NOT curl
+            if 'docker exec' in line and ('curl' in line):
+                self.fail(
+                    'cmd_rollback has functional `docker exec + curl` line: '
+                    f'{stripped!r}. divs-backend is busybox (wget only); '
+                    'see [[divs-backend-curl-missing]]')
+
+    def test_cmd_rollback_diagnose_hint_uses_wget(self):
+        """cmd_rollback diagnose hint must suggest wget to operator.
+
+        Pre-R6.97-B printed `docker exec ... curl -v http://...` as the diagnose
+        hint on timeout. Operators copy-pasting the hint hit the OCI exec failed
+        error, defeating the purpose of the hint. R6.97-B replaces with wget.
+
+        Pinning: the diagnose block's print() statements (excluding rationale
+        comments) must NOT contain `curl` and MUST contain `wget`. Comments
+        explaining the curl→wget fix history are allowed (rationale provenance).
+        """
+        import re
+        section = self._cmd_rollback_section()
+        # Strip pure-comment lines so rationale comments (which may reference
+        # the OLD curl pattern) don't trip the assertion.
+        code_lines = []
+        for line in section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                continue
+            code_lines.append(line)
+        code_section = '\n'.join(code_lines)
+
+        # Find the diagnose block by locating 'Diagnose:' and grabbing the next
+        # ~500 chars of code (covers multi-line print() via f-string concat).
+        m = re.search(r"print\('Diagnose:'\)(.*?)(?=return|\Z)", code_section, re.DOTALL)
+        self.assertIsNotNone(m,
+            msg='cmd_rollback diagnose block not found — test setup error or '
+                'diagnose block was removed entirely')
+        hint_block = m.group(0)
+        self.assertNotIn('curl', hint_block,
+            msg=f'cmd_rollback diagnose hint code references curl: {hint_block!r}')
+        self.assertIn('wget', hint_block,
+            msg=f'cmd_rollback diagnose hint must reference wget (busybox): '
+                f'{hint_block!r}')
+
+    def test_cmd_verify_probe_uses_wget_not_curl(self):
+        """cmd_verify probe loop must use wget, not curl.
+
+        cmd_verify probes 3 endpoints (/api/health, /actuator/health, /v3/api-docs).
+        Pre-R6.97-B used curl with `-w "\\nHTTP=%{http_code}}\\n"` for HTTP-code
+        extraction. R6.97-B replaces with wget (exit 0 = 2xx, exit 8 = 4xx/5xx)
+        and parses "status":"UP" substring.
+        """
+        section = self._cmd_verify_section()
+        for line in section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                continue
+            # Code line with docker exec + curl is banned in cmd_verify
+            if 'docker exec' in line and 'curl' in line:
+                self.fail(
+                    'cmd_verify has functional `docker exec + curl` line: '
+                    f'{stripped!r}')
+
+    def test_cmd_verify_uses_wget_exit_code_semantics(self):
+        """cmd_verify must understand wget exit codes (0=2xx, 8=4xx/5xx).
+
+        After R6.97-B, cmd_verify maps wget exit code to HTTP class. Pin that
+        the mapping comment + code is present so a future rewrite doesn't fall
+        back to curl's `-w` formatter.
+        """
+        section = self._cmd_verify_section()
+        self.assertIn('wget', section, msg='cmd_verify must use wget')
+        self.assertIn("'status':'UP'", section.replace('"status":"UP"', "'status':'UP'"),
+            msg='cmd_verify must parse "status":"UP" substring')
+        # Map wget exit code (0 / 8) to HTTP class — code OR comment
+        self.assertTrue(
+            ('exit 8' in section) or ('exit == 8' in section) or ('code == 8' in section),
+            msg='cmd_verify must document wget exit code 8 = 4xx/5xx mapping')
 
 
 if __name__ == '__main__':

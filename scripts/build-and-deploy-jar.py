@@ -649,6 +649,15 @@ def cmd_deploy(args):
                     markers_found, markers_snippet = z.check_marker_log(
                         REMOTE_CONTAINER,
                         v1_markers,
+                        # R6.97-B: widen the log window. The marker @PostConstruct
+                        # emission happens asynchronously during bean initialization,
+                        # which can land >30s after `docker restart` (especially on
+                        # cold-start with classpath scanning). The pre-R6.97 default
+                        # 30s window caused false-negatives on deploy verification
+                        # (see [[r696-summary]] §post-deploy verify). 5m covers the
+                        # cold-start case with margin.
+                        since='5m',
+                        timeout=20,
                     )
                     if markers_found:
                         print(f'  [V1] All {len(v1_markers)} markers found in container logs (R6.83 + R6.85b deploy confirmed)')
@@ -814,8 +823,14 @@ def cmd_rollback(args):
         last_status = None
         while time.time() - start < timeout_s:
             elapsed = time.time() - start
+            # R6.97-B: probe via wget — divs-backend is busybox (has wget but NOT
+            # curl; see [[divs-backend-curl-missing]]). Pre-R6.97 used `docker exec
+            # curl -sf -m 5` which returns exit 126 with "OCI runtime exec failed:
+            # curl not found" for the entire 120s window, falsely reporting rollback
+            # failure. Same wget flags as cmd_deploy probe (line 612): -q -O - -T 5
+            # --tries=1 = quiet, body to stdout, 5s read timeout, single attempt.
             out, code = z.run(
-                f'docker exec {REMOTE_CONTAINER} curl -sf -m 5 {health_url}',
+                f'docker exec {REMOTE_CONTAINER} wget -qO- -T 5 --tries=1 {health_url}',
                 timeout=15,
             )
             if code == 0 and out.strip():
@@ -830,7 +845,7 @@ def cmd_rollback(args):
                 last_status = out.strip()[:200]
                 print(f'  ... {elapsed:.1f}s status not UP: {last_status}')
             else:
-                print(f'  ... {elapsed:.1f}s curl exit={code} (container still starting)')
+                print(f'  ... {elapsed:.1f}s wget exit={code} (container still starting)')
             time.sleep(2)
 
         print()
@@ -839,7 +854,11 @@ def cmd_rollback(args):
         print()
         print('Diagnose:')
         print(f'  docker logs {REMOTE_CONTAINER} --tail 100')
-        print(f'  docker exec {REMOTE_CONTAINER} curl -v http://localhost:{BACKEND_PORT}/actuator/health')
+        # R6.97-B: curl -> wget for in-container probes (divs-backend is busybox).
+        # Operators copy-pasting the diagnose hint must not hit the OCI exec failed
+        # error that pre-R6.97 users reported.
+        print(f'  docker exec {REMOTE_CONTAINER} wget -qO- -T 5 --tries=1 '
+              f'http://localhost:{BACKEND_PORT}/actuator/health')
         # Security Q8: surface multi-deploy limitation
         print()
         print('Note: .previous still holds the OLD jar. A subsequent deploy will rotate')
@@ -867,18 +886,30 @@ def cmd_verify(args):
         all_ok = True
         for endpoint in HEALTH_ENDPOINTS:
             url = f'http://localhost:{BACKEND_PORT}{endpoint}'
+            # R6.97-B: curl -> wget for in-container probes (divs-backend is busybox).
+            # wget lacks curl's `-w "\nHTTP=%{http_code}\n"` formatter; rely on exit
+            # code semantics (0 = HTTP 2xx, 8 = server error 4xx/5xx) and parse the
+            # body for `"status":"UP"` substring as the authoritative health check.
+            # For /v3/api-docs we accept any 2xx (wget exit 0 = body delivered).
             out, code = z.run(
-                f'docker exec {REMOTE_CONTAINER} curl -sf -m 5 -w "\\nHTTP=%{{http_code}}\\n" {url}',
+                f'docker exec {REMOTE_CONTAINER} wget -qO- -T 5 --tries=1 {url}',
                 timeout=15,
             )
-            http_line = [l for l in out.splitlines() if l.startswith('HTTP=')]
-            http_code = http_line[0].split('=')[1] if http_line else '?'
-            body = '\n'.join(l for l in out.splitlines() if not l.startswith('HTTP='))
-            ok = code == 0 and http_code in ('200',)
+            # Map wget exit code to HTTP class. busybox wget:
+            #   0 = HTTP 2xx (body delivered), 8 = server error response (4xx/5xx).
+            # Other non-zero (1=generic, 4=network failure) treated as transport-level fail.
+            if code == 0:
+                http_code = '200'
+            elif code == 8:
+                http_code = '4xx/5xx'
+            else:
+                http_code = '?'
+            body = out
+            ok = code == 0 and ('"status":"UP"' in body or endpoint != '/api/health')
             status = '[OK]  ' if ok else '[FAIL]'
-            print(f'  {status} {endpoint:25} HTTP {http_code}')
+            print(f'  {status} {endpoint:25} wget exit={code} (HTTP {http_code})')
             if not ok:
-                print(f'         curl exit={code}, body[:200]: {body[:200]}')
+                print(f'         body[:200]: {body[:200]}')
                 all_ok = False
             else:
                 print(f'         body[:150]: {body[:150].replace(chr(10), " ")}')

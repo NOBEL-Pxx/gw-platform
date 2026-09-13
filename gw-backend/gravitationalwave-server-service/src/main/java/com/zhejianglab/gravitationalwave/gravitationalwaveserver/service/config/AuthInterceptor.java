@@ -62,6 +62,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/app/gravitationalwave/favorites",    // all methods
             // Collections
             "/api/app/gravitationalwave/collections",  // POST/PUT/DELETE
+            // R6.97-A: Image cutout — POST /auth (china-vo.org token exchange) and
+            //          POST /download (china-vo.org cutout fetch + server-side
+            //          file write) both require a valid JWT. GET /datasets remains
+            //          public (read-only listing, not gated here).
+            "/api/app/gravitationalwave/image-cutout",
             // Auth
             "/api/auth/verify",
             "/api/auth/logout",

@@ -1,3 +1,36 @@
+> ## SUPERSEDED / FALSE-ALARM NOTICE (2026-09-10, R6.103)
+>
+> **This analysis proposed a migration that R6.103 3-perspective review correctly rejected.**
+>
+> The review caught that **`default.conf.template` (the file Dockerfile COPYs to `/etc/nginx/templates/` for envsubst at container start) actively INCLUDES all 5 allegedly-dead files at lines 47-51**:
+>
+> ```nginx
+> include /etc/nginx/shared/server-common.conf;       # keepalive + client_max_body_size 50m + R6.37 sub_filter
+> include /etc/nginx/includes/hsts.conf;              # REQUIRED for HTTPS production (browser-enforced)
+> include /etc/nginx/includes/security-headers.conf;  # X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+> include /etc/nginx/includes/csp-header.conf;        # CSP enforcement (XSS/frame-ancestors)
+> include /etc/nginx/shared/locations-common.conf;    # All 8 production location blocks (/, /api/, /static-files/, /pipeline/, /firefly/, /assets, /index.html, /wasm)
+> ```
+>
+> The R6.99 analysis based its "dead code" claim on an incomplete grep — it missed
+> the `default.conf.template` include chain. The 5-dir layout is **NOT dead code**;
+> it's actively serving production HTTPS.
+>
+> **R6.103 outcome**: NO-OP closure. Implementation was blocked by the safety
+> classifier before any file was deleted. The verify phase confirmed files are
+> unchanged on disk.
+>
+> **Correct migration path** (for future R6.10x+, deferred again):
+> 1. Audit which includes are ENV-DEPENDENT (need envsubst) vs STATIC (no envsubst)
+> 2. If static (the 5 includes above): KEEP build-time COPY (already works)
+> 3. If env-dependent (currently NONE of the 5): consider bind-mount
+> 4. The "5 dirs" problem is real for DISCOVERY FRICTION (engineer must read 5 dirs),
+>    but not for FUNCTIONAL CORRECTNESS — the current setup works
+>
+> **Original proposal preserved below for context, but DO NOT IMPLEMENT.**
+
+---
+
 # conf.d-bindmount multi-location analysis (R6.99 #4)
 
 **Created**: 2026-09-10
