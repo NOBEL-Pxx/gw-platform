@@ -9,10 +9,11 @@
 
          R6.47 endpoints:
          - alasky.cds.unistra.fr  : CDS HiPS+hips2fits (serves DSS2, 2MASS, NVSS, AllWISE, PS1, Gaia via CDS proxy)
-         - aladin.u-strasbg.fr    : Aladin Lite library
 
          R6.48 additions:
          - archives.esac.esa.int  : Gaia ESA archive (direct, bypassing CDS proxy)
+
+         R6.99-B: removed aladin.u-strasbg.fr preconnect (aladin-lite npm package removed; src/util/aladin-lite-beta/ dead code recycled).
 
          2MASS and NVSS survey data is already covered via the alasky preconnect
          (the codebase fetches all 7 surveys via CDS HiPS proxy, see bandOrder.ts).
@@ -25,8 +26,6 @@
          legitimately use alasky.cds.unistra.fr for HiPS tiles. -->
     <link rel="preconnect" href="https://alasky.cds.unistra.fr" crossorigin />
     <link rel="dns-prefetch" href="https://alasky.cds.unistra.fr" />
-    <link rel="preconnect" href="https://aladin.u-strasbg.fr" crossorigin />
-    <link rel="dns-prefetch" href="https://aladin.u-strasbg.fr" />
     <link rel="preconnect" href="https://archives.esac.esa.int" crossorigin />
     <link rel="dns-prefetch" href="https://archives.esac.esa.int" />
 

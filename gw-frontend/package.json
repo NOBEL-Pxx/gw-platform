@@ -20,7 +20,6 @@
   },
   "dependencies": {
     "ahooks": "^3.8.1",
-    "aladin-lite": "^3.6.5",
     "antd": "^5.22.0",
     "axios": "^1.7.7",
     "firefly-api-access": "^0.0.4",
