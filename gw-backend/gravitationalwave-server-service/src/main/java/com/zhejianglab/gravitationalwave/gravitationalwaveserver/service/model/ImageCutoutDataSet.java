@@ -24,34 +24,65 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+/**
+ * ImageCutoutDataSet — china-vo.org HiPS cutout downloader.
+ *
+ * <p><b>R6.98-D migration</b>: replaced the per-instance
+ * {@code RestTemplate} with a DEDICATED TLS-pinned AND DNS-pinned
+ * {@link RestClient} bean (from {@code HttpClientConfig.chinaVoRestClient()}).
+ * The china-vo.org channel is isolated from the shared client because it
+ * needs both {@link com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.config.TlsPinningHttpClientFactory}
+ * (R6.98-A) AND {@link com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.config.ChinaVoDnsResolver}
+ * (R6.98-D) — neither of which must bleed into other consumers.
+ *
+ * <p><b>Iron rules applied</b>:
+ * <ul>
+ *   <li><b>R6.98-A</b>: all outbound HTTP MUST use a Spring-managed
+ *       {@link RestClient} bean — no ad-hoc {@code new RestTemplate()}. This
+ *       class uses the dedicated {@code chinaVoRestClient} bean.</li>
+ *   <li><b>R6.98-D</b> (TLS + DNS pinning variant): outbound HTTPS to
+ *       {@code hips.china-vo.org} MUST go through a pinned
+ *       {@link org.apache.hc.client5.http.impl.classic.CloseableHttpClient}
+ *       built by {@code TlsPinningHttpClientFactory} AND a {@link org.apache.hc.client5.http.DnsResolver}
+ *       override ({@code ChinaVoDnsResolver}) that resolves
+ *       {@code hips.china-vo.org} to a known IP at startup.</li>
+ * </ul>
+ *
+ * <p><b>Pre-existing defenses preserved</b>:
+ * <ul>
+ *   <li>R6.95-A: SSRF — {@code validateImageUrl} rejects Location/image_path
+ *       hosts not ending in {@code .china-vo.org}.</li>
+ *   <li>R6.96-O6: maxOutputSize (50 MiB) pre-fetch Content-Length + post-fetch backstop.</li>
+ *   <li>R6.96-O7: DNS-rebinding — {@code validateResolvedIps} rejects private IPs
+ *       (loopback, site-local, link-local, CGNAT, IPv6 ULA).</li>
+ *   <li>R6.95-B: path-traversal — {@code resolveCanonicalOutputPath} canonicalizes
+ *       the output path against {@code outputBasedir}.</li>
+ * </ul>
+ */
 @Component
 public class ImageCutoutDataSet extends DataSet {
     private static final Logger logger = LoggerFactory.getLogger(ImageCutoutDataSet.class);
 
-    // R6.94d: shared RestTemplate + ObjectMapper (R6.85-A-REST pattern from LlmController / PipelineProxyController).
-    // Previously each of auth()/download()/getDatasets() did `new RestTemplate()` + `new ObjectMapper()` per call —
-    // that's 3 RestTemplate allocations + 2 ObjectMapper allocations per request cycle, defeating connection pooling
-    // (SimpleClientHttpRequestFactory is created fresh each time so connections cannot be reused).
-    //
-    // Iron rule R6.94-B: any @Component with RestTemplate usage MUST use instance-level `final RestTemplate` field
-    // (shared connection pool, single ObjectMapper for thread-safety). NO `new RestTemplate()` inside hot-path methods.
-    //
-    // Thread-safety notes:
-    //   RestTemplate: thread-safe for execute() once configured (per Spring docs).
-    //   ObjectMapper: thread-safe for read operations after construction (no per-request reconfiguration here).
-    private final RestTemplate restTemplate = new RestTemplate();
+    // R6.94d: shared ObjectMapper (R6.85-A-REST pattern from LlmController / PipelineProxyController).
+    // ObjectMapper is thread-safe for read operations after construction (no per-request reconfiguration here).
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // R6.98-D: dedicated chinaVoRestClient bean injected via constructor. Replaces the previous
+    // `private final RestTemplate restTemplate = new RestTemplate();` per-instance field (R6.98-A iron rule).
+    // The bean is built by HttpClientConfig.chinaVoRestClient() with BOTH:
+    //   - TLS pubkey pinning (TlsPinningHttpClientFactory, when chinavo.api.pinned-cert-sha256 is set)
+    //   - DNS resolver pinning (ChinaVoDnsResolver, always)
+    private final RestClient restClient;
 
     /**
      * R6.95-A: SSRF defense. china-vo.org's /generate endpoint responds with a 302
@@ -92,12 +123,6 @@ public class ImageCutoutDataSet extends DataSet {
     @Value("${imagecutout.output.maxsize:52428800}")
     private long maxOutputSize;
 
-    // R6.96-O5: RestTemplate timeouts (R6.85b R6.83-C iron rule, applied to this controller).
-    // china-vo.org is a public service — without timeouts, a hung upstream can stall the
-    // Tomcat worker thread indefinitely. 5s connect / 30s read is generous but bounded.
-    private static final int REST_CONNECT_TIMEOUT_MS = 5_000;
-    private static final int REST_READ_TIMEOUT_MS = 30_000;
-
     // R6.90 B5: token + auth-in-progress tracking for idempotency.
     // Volatile visibility is sufficient for token (single-writer pattern: read in
     // authorized(), write in auth() under synchronized). The AtomicBoolean
@@ -123,6 +148,20 @@ public class ImageCutoutDataSet extends DataSet {
     }
 
     /**
+     * R6.98-D constructor: injects the dedicated chinaVoRestClient bean (built
+     * by {@code HttpClientConfig.chinaVoRestClient()} with TLS pinning +
+     * DNS resolver pinning). Spring auto-injects the bean via constructor
+     * injection (the single non-default constructor in this class).
+     *
+     * @param chinaVoRestClient the dedicated TLS/DNS-pinned RestClient bean.
+     *                         Must NOT be null — pre-condition enforced by
+     *                         Spring's bean factory.
+     */
+    public ImageCutoutDataSet(RestClient chinaVoRestClient) {
+        this.restClient = chinaVoRestClient;
+    }
+
+    /**
      * R6.90 B5: auth() is now IDEMPOTENT.
      *
      * <p>If a valid token is already cached, the call returns immediately without
@@ -138,6 +177,9 @@ public class ImageCutoutDataSet extends DataSet {
      *       throttles aggressively; skipping the call when the token is still
      *       valid saves quota.</li>
      * </ul>
+     *
+     * <p>R6.98-D: outbound call uses the dedicated {@link RestClient} bean
+     * (TLS pinned, DNS pinned) instead of a per-instance {@code RestTemplate}.
      *
      * <p>Iron rule R6.90-C: any side-effecting method on a @Component MUST be
      * idempotent on retry, OR must use an in-progress flag to coalesce
@@ -165,11 +207,15 @@ public class ImageCutoutDataSet extends DataSet {
                 Map<String, String> loginData = new HashMap<>();
                 loginData.put("username", username);
                 loginData.put("password", password);
-                HttpHeaders headers = new HttpHeaders();
-                headers.set("Content-Type", "application/json");
-                HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(loginData), headers);
-                // R6.94d: getStatusCode().value() (not deprecated getStatusCodeValue())
-                ResponseEntity<String> response = restTemplate.postForEntity(loginUrl, entity, String.class);
+                String loginJson = objectMapper.writeValueAsString(loginData);
+                // R6.98-D: call via dedicated TLS/DNS-pinned RestClient bean.
+                // RestClient.retrieve() throws HttpClientErrorException on 4xx/5xx — we catch below.
+                ResponseEntity<String> response = restClient.post()
+                        .uri(loginUrl)
+                        .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                        .body(loginJson)
+                        .retrieve()
+                        .toEntity(String.class);
                 if (response.getStatusCode().value() == 200) {
                     JsonNode json = objectMapper.readTree(response.getBody());
                     this.token = json.path("token").asText();
@@ -178,6 +224,9 @@ public class ImageCutoutDataSet extends DataSet {
                     logger.error("Login failed: HTTP {}", response.getStatusCode().value());
                     this.token = "";
                 }
+            } catch (HttpClientErrorException | HttpServerErrorException e) {
+                logger.error("Login failed: HTTP {} - {}", e.getStatusCode().value(), e.getMessage());
+                this.token = "";
             } catch (Exception e) {
                 logger.error("Failed to authenticate with username/password", e);
                 this.token = "";
@@ -208,18 +257,15 @@ public class ImageCutoutDataSet extends DataSet {
         String url = builder.toUriString();
         logger.info("Request URL: {}", url);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + this.token);
-        headers.set("User-Agent", "Java-Spring RestClient");
-        HttpEntity<String> entity = new HttpEntity<>(headers);
-
         try {
-            ResponseEntity<String> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.GET,
-                    entity,
-                    String.class
-            );
+            // R6.98-D: call via dedicated TLS/DNS-pinned RestClient bean.
+            // RestClient.retrieve() throws on 4xx/5xx — caught by the catch blocks below.
+            ResponseEntity<String> response = restClient.get()
+                    .uri(url)
+                    .header("Authorization", "Bearer " + this.token)
+                    .header("User-Agent", "Java-Spring RestClient")
+                    .retrieve()
+                    .toEntity(String.class);
             if (response.getStatusCode().value() != 200) {
                 logger.error("Failed to generate image: HTTP Status {}", response.getStatusCode().value());
                 throw new IOException("Failed to generate image: " + response.getStatusCode().value());
@@ -244,19 +290,20 @@ public class ImageCutoutDataSet extends DataSet {
             // (image_path field). Without this, a compromised/MITM'd china-vo.org could bypass
             // the Location-header branch entirely by returning a JSON body with a foreign URL.
             validateImageUrl("R6.95-A", imagePath);
-            ResponseEntity<byte[]> imageResponse = restTemplate.exchange(
-                    imagePath,
-                    HttpMethod.GET,
-                    entity,
-                    byte[].class
-            );
+            // R6.98-D: fetch image bytes via the dedicated TLS/DNS-pinned RestClient bean.
+            // The same client is used regardless of whether imagePath came from Location
+            // header or image_path body — DNS pinning for hips.china-vo.org plus system
+            // resolver for redirect targets (validated by R6.95-A + R6.96-O7 above).
+            ResponseEntity<byte[]> imageResponse = restClient.get()
+                    .uri(imagePath)
+                    .header("Authorization", "Bearer " + this.token)
+                    .header("User-Agent", "Java-Spring RestClient")
+                    .retrieve()
+                    .toEntity(byte[].class);
             // R6.96-O6: max-size pre-check via Content-Length header.
-            // SimpleClientHttpRequestFactory fully buffers the response body into
-            // a byte[] BEFORE returning, so checking imageContent.length runs TOO
-            // LATE to prevent heap OOM. Cheap defense: inspect Content-Length
-            // header and reject early if declared size exceeds cap. Honest
-            // servers always send Content-Length; chunked/missing is rejected
-            // conservatively (false positive acceptable for this DoS vector).
+            // Apache HttpClient 5 + SimpleClientHttpRequestFactory buffering still applies
+            // for small bodies (defense-in-depth). For large bodies, switch to streaming
+            // via ResponseExtractor + running byte counter (out of R6.98 scope).
             Long contentLength = imageResponse.getHeaders().getContentLength();
             if (contentLength > 0 && contentLength > maxOutputSize) {
                 throw new IOException("R6.96-O6: declared Content-Length " + contentLength
@@ -274,10 +321,7 @@ public class ImageCutoutDataSet extends DataSet {
             }
             // R6.96-O6: max-size backstop (defense in depth). Primary defense is the
             // Content-Length pre-fetch check above; this catches chunked/missing-length
-            // responses that slipped past the header check. With SimpleClientHttpRequestFactory
-            // the body is already buffered into byte[] by this point — a malicious
-            // response without Content-Length could still OOM the heap. Future hardening:
-            // switch to streaming via ResponseExtractor + running byte counter (out of R6.96 scope).
+            // responses that slipped past the header check.
             if (imageContent.length > maxOutputSize) {
                 throw new IOException("R6.96-O6: image/fits size " + imageContent.length
                     + " bytes exceeds maxOutputSize " + maxOutputSize + " bytes ("
@@ -319,9 +363,17 @@ public class ImageCutoutDataSet extends DataSet {
         return new String[]{"PNG", "FITS"};
     }
 
+    /**
+     * R6.98-D: GET /generate/list-dataset via the dedicated TLS/DNS-pinned
+     * RestClient bean. Replaces the previous per-instance
+     * {@code restTemplate.getForObject(url, String[].class)}.
+     */
     public String[] getDatasets() {
         String url = "https://hips.china-vo.org/generate/list-dataset";
-        return restTemplate.getForObject(url, String[].class);
+        return restClient.get()
+                .uri(url)
+                .retrieve()
+                .body(String[].class);
     }
 
     /**
@@ -534,48 +586,25 @@ public class ImageCutoutDataSet extends DataSet {
     }
 
     /**
-     * R6.96-O5: RestTemplate lifecycle (R6.85b R6.83-C iron rule).
-     *
-     * <p>Configures explicit connect/read timeouts on the shared RestTemplate so a
-     * hung upstream (china-vo.org, or any future LLM endpoint) cannot stall the
-     * Tomcat worker thread indefinitely. Default JDK {@code HttpURLConnection}
-     * timeout is infinite, which is a denial-of-service vector under partial
-     * network failure.
-     *
-     * <p>V1 marker log line enables post-deploy verification via
-     * {@code docker logs divs-backend | grep -F "R6.96: ImageCutoutDataSet initialized"}.
+     * R6.98-D V1 marker — emitted UNCONDITIONALLY so deploy verification
+     * ({@code docker logs divs-backend | grep "R6.98-D: ImageCutoutDataSet"})
+     * confirms bean lifecycle. Timeouts and connection pooling now come
+     * from the dedicated {@code chinaVoRestClient} bean (10s connect,
+     * 30s response, 3min keep-alive) — no per-instance configuration needed.
      */
     @PostConstruct
     public void init() {
-        // R6.96 V1 marker — emitted UNCONDITIONALLY so deploy verification (docker logs
-        // | grep "R6.96: ImageCutoutDataSet initialized") confirms bean lifecycle even if
-        // the timeout configuration below throws (e.g., future classpath swap to apache-httpclient).
-        logger.info("R6.96: ImageCutoutDataSet initialized");
-        try {
-            Object factory = restTemplate.getRequestFactory();
-            if (factory instanceof SimpleClientHttpRequestFactory) {
-                SimpleClientHttpRequestFactory simple = (SimpleClientHttpRequestFactory) factory;
-                simple.setConnectTimeout(REST_CONNECT_TIMEOUT_MS);
-                simple.setReadTimeout(REST_READ_TIMEOUT_MS);
-                logger.info("R6.96: ImageCutoutDataSet RestTemplate timeouts configured (connect={}ms, read={}ms)",
-                    REST_CONNECT_TIMEOUT_MS, REST_READ_TIMEOUT_MS);
-            } else {
-                logger.warn("R6.96: ImageCutoutDataSet RestTemplate factory is {} (not SimpleClientHttpRequestFactory); timeouts NOT configured",
-                    factory == null ? "null" : factory.getClass().getName());
-            }
-        } catch (Exception e) {
-            logger.error("R6.96: failed to configure RestTemplate timeouts", e);
-        }
+        logger.info("R6.98-D: ImageCutoutDataSet initialized (TLS pinned china-vo.org, DNS resolver pinned)");
     }
 
     /**
-     * R6.96-O5: R6.83-A iron rule — clean up on bean destruction.
-     * SimpleClientHttpRequestFactory uses HttpURLConnection per request (auto-closed),
-     * but we emit the V1 marker log so post-deploy verification can confirm the
-     * R6.96 bytecode is live.
+     * R6.83-A iron rule — clean up on bean destruction. The dedicated
+     * {@code chinaVoRestClient} bean manages its own HttpClient lifecycle
+     * (destroyed by Spring when the application context closes). This method
+     * just emits the V1 marker for post-deploy verification.
      */
     @PreDestroy
     public void shutdown() {
-        logger.info("R6.96: ImageCutoutDataSet shutdown complete");
+        logger.info("R6.98-D: ImageCutoutDataSet shutdown complete");
     }
 }

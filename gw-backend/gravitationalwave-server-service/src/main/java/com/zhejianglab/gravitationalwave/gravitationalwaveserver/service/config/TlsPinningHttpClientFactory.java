@@ -1,5 +1,6 @@
 package com.zhejianglab.gravitationalwave.gravitationalwaveserver.service.config;
 
+import org.apache.hc.client5.http.DnsResolver;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -83,6 +84,25 @@ public final class TlsPinningHttpClientFactory {
      * @throws IllegalArgumentException if the fingerprint is not 64 lowercase hex chars
      */
     public static CloseableHttpClient build(String pinnedFingerprintHex, String hostDescription) {
+        return build(pinnedFingerprintHex, hostDescription, null);
+    }
+
+    /**
+     * R6.98-D: overload that ALSO installs a custom {@link DnsResolver} on the
+     * connection manager. Used by the {@code chinaVoRestClient} bean to combine
+     * TLS pinning (R6.98-A) with DNS pinning (R6.98-D) on the same HttpClient.
+     *
+     * <p>If {@code dnsResolver} is {@code null}, the default HttpClient 5
+     * {@link org.apache.hc.client5.http.SystemDefaultDnsResolver} is used
+     * (preserves prior behavior of the 2-arg overload).
+     *
+     * @param pinnedFingerprintHex  Lowercase hex SHA-256 of the SPKI. Same as 2-arg overload.
+     * @param hostDescription       Human-readable host name for V1 marker log.
+     * @param dnsResolver           Optional DNS resolver override. Pass {@code null}
+     *                              to use the system default.
+     */
+    public static CloseableHttpClient build(String pinnedFingerprintHex, String hostDescription,
+                                            DnsResolver dnsResolver) {
         validateFingerprint(pinnedFingerprintHex);
         SSLContext sslContext = buildPinnedSslContext(pinnedFingerprintHex);
 
@@ -91,7 +111,7 @@ public final class TlsPinningHttpClientFactory {
         // builder itself in this version).
         SSLConnectionSocketFactory sslSf = new SSLConnectionSocketFactory(sslContext);
 
-        PoolingHttpClientConnectionManager connManager = PoolingHttpClientConnectionManagerBuilder.create()
+        PoolingHttpClientConnectionManagerBuilder connBuilder = PoolingHttpClientConnectionManagerBuilder.create()
                 .setMaxConnTotal(MAX_CONN_TOTAL)
                 .setMaxConnPerRoute(MAX_CONN_PER_ROUTE)
                 .setDefaultConnectionConfig(ConnectionConfig.custom()
@@ -99,8 +119,16 @@ public final class TlsPinningHttpClientFactory {
                         .setSocketTimeout(RESPONSE_TIMEOUT)
                         .setTimeToLive(CONN_KEEP_ALIVE)
                         .build())
-                .setSSLSocketFactory(sslSf)
-                .build();
+                .setSSLSocketFactory(sslSf);
+        if (dnsResolver != null) {
+            // R6.98-D: install the custom resolver. Once set, ALL hostname
+            // resolutions for this connection manager go through it (instead
+            // of InetAddress.getAllByName).
+            connBuilder.setDnsResolver(dnsResolver);
+            log.info("R6.98-D: DNS resolver installed for {} connection manager (pinning active)",
+                    hostDescription);
+        }
+        PoolingHttpClientConnectionManager connManager = connBuilder.build();
 
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectionRequestTimeout(CONNECT_TIMEOUT)
