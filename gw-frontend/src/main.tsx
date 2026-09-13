@@ -12,6 +12,7 @@ import AntdMessage from '@/util/AntdMessage.ts'
 import { App as AntdApp } from 'antd'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { initCspMonitor } from '@/util/cspMonitor'
+import { registerSW } from '@/util/registerSW'
 import App from './App.tsx'
 import './index.css'
 
@@ -19,6 +20,11 @@ import './index.css'
 // /pipeline/security/csp-violation for backend logging. Catches issues like
 // accidental 'wasm-unsafe-eval' removal (would silently break Aladin Lite).
 initCspMonitor()
+
+// R6.99-C: register HiPS Service Worker (prod-only, no-op in dev)
+registerSW().catch(() => {
+  /* non-fatal - SW is a progressive enhancement */
+})
 
 createRoot(document.getElementById('root')!).render(
   // <StrictMode>

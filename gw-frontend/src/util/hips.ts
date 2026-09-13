@@ -150,6 +150,14 @@ export function clearHipsCache(): void {
   } catch {
     // localStorage unavailable - ignore
   }
+  // R6.99-C: also clear the HiPS Service Worker cache so callers get a
+  // truly fresh tile set on next fetch. Lazy import to avoid circular deps
+  // (registerSW.ts is imported by main.tsx already).
+  void import('./registerSW')
+    .then(({ clearHipsSWCache }) => clearHipsSWCache())
+    .catch(() => {
+      /* non-fatal */
+    })
 }
 
 /**
