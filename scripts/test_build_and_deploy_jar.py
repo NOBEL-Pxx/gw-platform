@@ -1306,14 +1306,20 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
     """
 
     def test_cmd_deploy_calls_check_marker_log_with_all_markers(self):
-        """Refactored cmd_deploy invokes z.check_marker_log with the 8-marker AND-check.
+        """Refactored cmd_deploy invokes z.check_marker_log with the 12-marker AND-check.
 
         R6.85b added 2 more markers (LlmController + PipelineProxyController RestTemplate
         init). R6.88 added 3 more (StaticFileController + SearchController + ImageCutoutController
-        R6.85-A application). R6.96 added 2 more (ImageCutoutDataSet init/shutdown). The check
-        must now be a list of 8 markers passed to check_marker_log so that an mvn build
-        without -am (R6.80 lesson) fails the AND-check rather than silently shipping stale
-        bytecode.
+        R6.85-A application). R6.96 added 2 more (ImageCutoutDataSet init/shutdown).
+        R6.98 added 4 more (HttpClientConfig init + TLS pinning api.deepseek.com +
+        TLS pinning hips.china-vo.org + DNS resolver pinned china-vo.org).
+        The check must now be a list of 12 markers passed to check_marker_log so that an
+        mvn build without -am (R6.80 lesson) fails the AND-check rather than silently
+        shipping stale bytecode.
+
+        The 2 TLS pinning markers are conditional on TOFU env vars
+        (deepseek.api.pinned-cert-sha256 + chinavo.api.pinned-cert-sha256) and serve as
+        a forcing function for ops to capture cert on first prod deploy per [[r698-summary]].
 
         R6.97-B widened the log window (since='5m', timeout=20) to fix a cold-start
         false-negative (see [[r696-summary]]). The assertion below accepts the new kwargs
@@ -1336,7 +1342,7 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             source, pattern_re,
             msg='cmd_deploy should call z.check_marker_log(REMOTE_CONTAINER, v1_markers, [kwargs]) — refactor missing',
         )
-        # All 8 markers must be present in v1_markers list (R6.83 + 2×R6.85b + 3×R6.88 + 2×R6.96)
+        # All 12 markers must be present in v1_markers list (R6.83 + 2×R6.85b + 3×R6.88 + 2×R6.96 + 4×R6.98)
         for marker in (
             'R6.83: HealthController probe executor initialized',
             'R6.85b: LlmController RestTemplate initialized',
@@ -1346,6 +1352,14 @@ class TestCheckMarkerLogRefactor(unittest.TestCase):
             'R6.88: ImageCutoutController initialized',
             'R6.96: ImageCutoutDataSet initialized',
             'R6.96: ImageCutoutDataSet shutdown complete',
+            # R6.98 Phase F: 4 new markers (see [[r698-summary]] §"V1 marker extension").
+            # The 2 TLS pinning markers are conditional on TOFU env vars;
+            # the test only verifies the list contains them (the runtime emit
+            # is gated by TlsPinningHttpClientFactory.build() actually firing).
+            'R6.98: HttpClientConfig initialized',
+            'R6.98: TLS pinning active for api.deepseek.com',
+            'R6.98: TLS pinning active for hips.china-vo.org',
+            'R6.98-D: DNS resolver pinned for hips.china-vo.org',
         ):
             self.assertIn(
                 marker, source,

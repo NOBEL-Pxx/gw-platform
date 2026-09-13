@@ -636,6 +636,13 @@ def cmd_deploy(args):
                     #   R6.88:  "R6.88: ImageCutoutController initialized"
                     #   R6.96:  "R6.96: ImageCutoutDataSet initialized"
                     #   R6.96:  "R6.96: ImageCutoutDataSet shutdown complete"
+                    # R6.98:  "R6.98: HttpClientConfig initialized" (Phase 1+2 infra)
+                    # R6.98:  "R6.98: TLS pinning active for api.deepseek.com (cert SHA-256: <hex>)"
+                    #         (Phase D; conditional on deepseek.api.pinned-cert-sha256 env var)
+                    # R6.98:  "R6.98: TLS pinning active for hips.china-vo.org (cert SHA-256: <hex>)"
+                    #         (Phase E; conditional on chinavo.api.pinned-cert-sha256 env var)
+                    # R6.98:  "R6.98-D: DNS resolver pinned for hips.china-vo.org -> [<ip1>, <ip2>]"
+                    #         (Phase E; unconditional; ChinaVoDnsResolver.forHipsChinaVoOrg)
                     v1_markers = [
                         'R6.83: HealthController probe executor initialized',
                         'R6.85b: LlmController RestTemplate initialized',
@@ -645,6 +652,10 @@ def cmd_deploy(args):
                         'R6.88: ImageCutoutController initialized',
                         'R6.96: ImageCutoutDataSet initialized',
                         'R6.96: ImageCutoutDataSet shutdown complete',
+                        'R6.98: HttpClientConfig initialized',                       # R6.98 Phase 1+2 (unconditional)
+                        'R6.98: TLS pinning active for api.deepseek.com',            # R6.98 Phase D (TOFU-conditional)
+                        'R6.98: TLS pinning active for hips.china-vo.org',          # R6.98 Phase E (TOFU-conditional)
+                        'R6.98-D: DNS resolver pinned for hips.china-vo.org',       # R6.98 Phase E (unconditional)
                     ]
                     markers_found, markers_snippet = z.check_marker_log(
                         REMOTE_CONTAINER,
@@ -660,7 +671,9 @@ def cmd_deploy(args):
                         timeout=20,
                     )
                     if markers_found:
-                        print(f'  [V1] All {len(v1_markers)} markers found in container logs (R6.83 + R6.85b deploy confirmed)')
+                        # R6.98 Phase F: updated to reflect 12 markers
+                        # (8 legacy R6.83/85b/88/96 + 4 R6.98).
+                        print(f'  [V1] All {len(v1_markers)} markers found in container logs (R6.83+85b+88+96+98 deploy confirmed)')
                     else:
                         # R6.89 F1: compute missing directly from v1_markers against the
                         # actual log snippet (markers_snippet is raw docker logs, NOT
@@ -671,10 +684,19 @@ def cmd_deploy(args):
                         missing = [m for m in v1_markers if m not in markers_snippet]
                         print(f'  [WARN V1] {len(missing)}/{len(v1_markers)} marker(s) NOT found in container logs.')
                         print(f'           Missing: {missing}')
-                        print('           If you are deploying R6.83+R6.85b and any marker is missing,')
+                        # R6.98 Phase F: hint updated for the 12-marker check.
+                        print('           If you are deploying R6.83+85b+88+96+98 and any marker is missing,')
                         print('           the jar has stale bytecode. Check: did mvn run with -am flag?')
                         print('           Pre-R6.83 jars (no marker) are valid; post-R6.83 jars MUST emit R6.83 line.')
                         print('           Post-R6.85b jars MUST emit both R6.85b lines.')
+                        print('           Post-R6.88 jars MUST emit all 3 R6.88 lines.')
+                        print('           Post-R6.96 jars MUST emit both R6.96 lines.')
+                        print('           Post-R6.98 jars MUST emit the R6.98 HttpClientConfig line.')
+                        print('           The 2 TLS pinning markers (api.deepseek.com + hips.china-vo.org)')
+                        print('           are conditional on TOFU env vars:')
+                        print('             deepseek.api.pinned-cert-sha256  (R6.98 Phase D)')
+                        print('             chinavo.api.pinned-cert-sha256   (R6.98 Phase E)')
+                        print('           Capture cert SHA-256 on first deploy (per [[r698-summary]]).')
                         if markers_snippet:
                             print(f'           Recent log grep output: {markers_snippet[:200]}')
                     return 0
