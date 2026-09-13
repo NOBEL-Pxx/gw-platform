@@ -83,6 +83,9 @@ services:
       RATE_LIMIT_REDIS_URI: redis://${REDIS_USERNAME:-}:${REDIS_PASSWORD}@redis:6379
       # R6.73 #4: Optional observability connection (readonly user, empty default = feature off)
       OBSERVABILITY_REDIS_URI: ${OBSERVABILITY_REDIS_URI:-}
+      # R6.99-D: TOFU cert capture — activates R6.98-A in prod
+      DEEPSEEK_API_PINNED_CERT_SHA256: ${DEEPSEEK_API_PINNED_CERT_SHA256:-}
+      CHINAVO_API_PINNED_CERT_SHA256: ${CHINAVO_API_PINNED_CERT_SHA256:-}
     deploy:
       resources:
         limits: { cpus: '4.0', memory: 4G }
