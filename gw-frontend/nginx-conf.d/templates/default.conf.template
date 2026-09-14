@@ -55,6 +55,25 @@ server {
     include /etc/nginx/includes/csp-header.conf;
     include /etc/nginx/shared/locations-common.conf;
 
+    # R6.99-F: /v3/ (Spring Boot OpenAPI spec path) proxy to divs-backend.
+    # Without this handler, /v3/api-docs falls through to location / SPA fallback
+    # in locations-common.conf and serves index.html (9195B) instead of the
+    # OpenAPI JSON spec (17820B). Discovered 2026-09-14 during 6002 slowness
+    # diagnostic: 5 hits in nginx access log all returned SPA shell to real users.
+    # location / (length 1) loses to ^~ /v3/ (length 4) on longest-prefix match,
+    # so this overrides the SPA fallback without touching image-baked locations.
+    location ^~ /v3/ {
+        proxy_pass http://divs-backend:8093/v3/;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        include /etc/nginx/includes/security-headers.conf;
+        include /etc/nginx/includes/csp-header.conf;
+    }
+
     error_page 500 502 503 504 /50x.html;
     location = /50x.html { root /usr/share/nginx/html; }
 }
