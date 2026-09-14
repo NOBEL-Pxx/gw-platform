@@ -23,6 +23,7 @@ Failure mode:
 - User sees real progress, real failures. No false success.
 """
 from __future__ import annotations
+from typing import Optional
 
 import hashlib
 import os
@@ -453,7 +454,12 @@ HIPS_TILE_ENDPOINT_ALLOWLIST = frozenset({
     "skies.esac.esa.int",
 })
 
-HIPS_TILE_SURVEY_REGEX = r"^[A-Za-z0-9_/-]{3,64}$"
+HIPS_TILE_SURVEY_REGEX = r"^[A-Za-z0-9_][A-Za-z0-9_/-]{1,62}[A-Za-z0-9_]$"
+
+# R6.99-H-url-format: when frontend passes actual CDS tile path it parsed
+# (e.g. "Dir0/Npix0.jpg" or "Allsky.jpg"), use it directly instead of
+# building URL from z/x/y. Allowlist prevents path traversal in tile_path.
+HIPS_TILE_TILEPATH_REGEX = r"^(Allsky|Dir[0-9]+/Npix[0-9]+)\.(jpg|png|webp)$"
 
 
 def _hips_tile_cache_key(survey: str, z: int, x: int, y: int) -> str:
@@ -462,15 +468,66 @@ def _hips_tile_cache_key(survey: str, z: int, x: int, y: int) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+def _hips_tile_zxy_to_tile(z: int, x: int, y: int) -> str:
+    """Convert (z, x, y) to CDS tile path component.
+
+    Low zoom (z <= 3): "Allsky.jpg" (CDS merged low-zoom image)
+    High zoom: "Dir{N}/Npix{M}.jpg" where
+      M = x + y * (2 ** z)            # row-major linearization, 2^z x 2^z grid
+      N = M // 10000                   # tiles grouped into 10000-tile directories
+    """
+    if z <= 3:
+        return "Allsky.jpg"
+    npix = x + y * (2 ** z)
+    dir_n = npix // 10000
+    return f"Dir{dir_n}/Npix{npix}.jpg"
+
+
+def _hips_tile_canonical_survey(survey: str) -> str:
+    """Map frontend survey ID to CDS canonical collection path.
+
+    Single source of truth for survey canonicalization. Used by both
+    _hips_tile_build_cds_url (fallback) and the inline tile_path branch
+    in the route handler.
+    """
+    if survey.startswith("DSS2/"):
+        return "DSS/DSS2Merged"
+    if survey.startswith("DSS/"):
+        return survey
+    return f"DSS/{survey}"
+
+
 def _hips_tile_build_cds_url(survey: str, z: int, x: int, y: int, endpoint: str) -> str:
-    """Build CDS HiPS tile URL. Pattern: https://{endpoint}/{survey}/Norder{z}/N0000{x:04x}/N0000{y:04x}.jpg"""
-    return f"https://{endpoint}/{survey}/Norder{z}/N0000{x:04x}/N0000{y:04x}.jpg"
+    """Build CDS HiPS tile URL.
+
+    CDS HiPS canonical URL formats:
+      Low zoom (z <= 3):  https://{endpoint}/{survey}/Norder{z}/Allsky.{ext}
+      High zoom (z >= 4): https://{endpoint}/{survey}/Norder{z}/Dir{N}/Npix{M}.{ext}
+
+    Tile linearization (HiPS row-major, 2^z x 2^z grid):
+      M (Npix) = x + y * (2 ** z)      # verified against CDS 2026-09-14
+      N (Dir)  = M // 10000              # tiles grouped into 10000-tile directories
+
+    Survey mapping (DSS2 color surveys all share DSS2Merged on CDS):
+      DSS2/Blue, DSS2/Red, DSS2/IR  ->  DSS/DSS2Merged
+      DSS2Merged                      ->  DSS/DSS2Merged  (already canonical)
+      anything else                   ->  DSS/{survey}    (assume DSS collection)
+
+    NOTE: Frontend is preferred to pass `tile_path` query param when available
+    (bypasses this builder entirely; uses the actual CDS path it parsed from
+    buildHipsUrl). This function is the fallback when frontend only sends z/x/y.
+    """
+    cds_survey = _hips_tile_canonical_survey(survey)
+    tile_path = _hips_tile_zxy_to_tile(z, x, y)
+    return f"https://{endpoint}/{cds_survey}/Norder{z}/{tile_path}"
 
 
 def _hips_tile_evict_if_needed() -> None:
     """LRU evict oldest tiles until count <= HIPS_TILE_MAX_TILES or bytes <= HIPS_TILE_MAX_BYTES."""
+    # R6.99-H-review-A8: globs both *.jpg and *.png since tile_path allowlist
+    # permits .png tiles (frontend may send Allsky.png or Dir/Npix.png).
     try:
-        files = list(HIPS_TILE_CACHE_DIR.glob("*.jpg"))
+        files = list(HIPS_TILE_CACHE_DIR.glob("*.jpg")) + list(HIPS_TILE_CACHE_DIR.glob("*.png"))
     except OSError:
         return
     # Evict by count
@@ -481,7 +538,7 @@ def _hips_tile_evict_if_needed() -> None:
                 files.pop(0).unlink()
             except OSError:
                 pass
-        files = list(HIPS_TILE_CACHE_DIR.glob("*.jpg"))
+        files = list(HIPS_TILE_CACHE_DIR.glob("*.jpg")) + list(HIPS_TILE_CACHE_DIR.glob("*.png"))
     # Evict by bytes
     try:
         total = sum(p.stat().st_size for p in files)
@@ -510,7 +567,17 @@ async def hips_tile(
                         description="HiPS survey ID, e.g. DSS2/Blue"),
     endpoint: str = Query(
         "alasky.cds.unistra.fr",
-        description="CDS HiPS endpoint (allowlist only)",
+        pattern=r"^[a-z][a-z0-9.\-]{0,63}$",
+        description="CDS HiPS endpoint (allowlist only, DNS host pattern)",
+    ),
+    tile_path: Optional[str] = Query(
+        None,
+        pattern=HIPS_TILE_TILEPATH_REGEX,
+        description=(
+            "Optional actual CDS tile path (e.g. Dir0/Npix0.jpg or Allsky.jpg). "
+            "When provided, bypasses URL builder and uses this directly. "
+            "Frontend prefers this over z/x/y when available."
+        ),
     ),
     if_none_match: str = Header(None, alias="If-None-Match"),
 ):
@@ -531,8 +598,26 @@ async def hips_tile(
     if x >= 2 ** z or y >= 2 ** z:
         raise HTTPException(400, f"x/y out of range for z={z}: x<{2**z} y<{2**z}")
 
-    cache_key = _hips_tile_cache_key(survey, z, x, y)
-    cache_path = HIPS_TILE_CACHE_DIR / f"{cache_key}.jpg"
+    # R6.99-H-url-format: branch cache key on tile_path presence.
+    # When tile_path is provided, x/y are 0/0 placeholders from frontend and
+    # don't contribute to uniqueness — skip them to prevent cache pollution
+    # (a malicious frontend varying x/y would otherwise create distinct keys
+    # for the same actual tile).
+    if tile_path:
+        cache_key_input = f"{survey}:{z}:{tile_path}"
+    else:
+        cache_key_input = f"{survey}:{z}:{x}:{y}"
+    cache_key = hashlib.sha256(cache_key_input.encode()).hexdigest()[:16]
+    # R6.99-H-review-A8: cache file suffix matches tile_path extension when
+    # provided (frontend sends jpg/png/webp). Default to .jpg for the legacy
+    # x/y fallback path.
+    if tile_path:
+        ext = "." + tile_path.rsplit(".", 1)[-1].lower()
+        if ext not in {".jpg", ".png", ".webp"}:
+            ext = ".jpg"
+    else:
+        ext = ".jpg"
+    cache_path = HIPS_TILE_CACHE_DIR / f"{cache_key}{ext}"
     lock_path = HIPS_TILE_CACHE_DIR / f"{cache_key}.lock"
 
     # Cache hit (fast path)
@@ -574,7 +659,13 @@ async def hips_tile(
     # Cache miss: fetch from CDS with thundering-herd protection.
     # Iron rule R6.99-H-thundering-herd-lock: per-key file lock (best-effort).
     # fcntl is Unix-only; on Windows the lock is a no-op (still works, just no herd protection).
-    cds_url = _hips_tile_build_cds_url(survey, z, x, y, endpoint)
+    # R6.99-H-url-format: prefer frontend-provided tile_path (actual CDS path).
+    # Both branches use shared canonical-survey + tile-path helpers for DRY.
+    cds_survey = _hips_tile_canonical_survey(survey)
+    if tile_path:
+        cds_url = f"https://{endpoint}/{cds_survey}/Norder{z}/{tile_path}"
+    else:
+        cds_url = f"https://{endpoint}/{cds_survey}/Norder{z}/{_hips_tile_zxy_to_tile(z, x, y)}"
     lock_file = None
     try:
         try:

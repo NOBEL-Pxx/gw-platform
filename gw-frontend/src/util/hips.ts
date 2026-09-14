@@ -162,31 +162,40 @@ export function clearHipsCache(): void {
 
 
 
-// R6.99-H: Parse HiPS tile path to extract z/x/y coordinates.
-// HiPS URL pattern: /Norder{z}/N0000{x:04x}/N0000{y:04x}.{ext}
-// Returns null if path doesn't match (e.g. /Dir0/index.png — index files).
+// R6.99-H-url-format: Parse HiPS tile path to extract z + actual CDS tile path.
+// CDS canonical formats:
+//   /Norder{z}/Allsky.{ext}                       (low zoom, z <= 3)
+//   /Norder{z}/Dir{N}/Npix{M}.{ext}               (high zoom, z >= 4)
+// Returns null for non-tile paths (e.g. /Dir0/index.png, /properties, etc.).
 function _parseHipsTileCoords(
   tilePath: string,
-): { z: number; x: number; y: number } | null {
-  // Pattern: Norder<digits>/N<hex or dec>x/N<hex or dec>y.<ext>
-  const m = tilePath.match(/^Norder(\d+)\/N0*([0-9a-fA-F]+)\/N0*([0-9a-fA-F]+)\.(?:jpg|png|webp)$/i)
-  if (!m) return null
-  const z = parseInt(m[1], 10)
-  const x = parseInt(m[2], 16)  // CDS uses hex (N0000...)
-  const y = parseInt(m[3], 16)
-  if (Number.isNaN(z) || Number.isNaN(x) || Number.isNaN(y)) return null
-  return { z, x, y }
+): { z: number; tilePath: string } | null {
+  // Match Allsky.jpg (low zoom)
+  const mAllsky = tilePath.match(/^Norder(\d+)\/Allsky\.(jpg|png|webp)$/i)
+  if (mAllsky) {
+    return { z: parseInt(mAllsky[1], 10), tilePath: `Allsky.${mAllsky[2].toLowerCase()}` }
+  }
+  // Match Dir{N}/Npix{M}.{ext}
+  const mDir = tilePath.match(/^Norder(\d+)\/(Dir\d+\/Npix\d+\.(?:jpg|png|webp))$/i)
+  if (mDir) {
+    return { z: parseInt(mDir[1], 10), tilePath: mDir[2] }
+  }
+  return null
 }
 
 // R6.99-H: Build backend proxy URL for HiPS tile (bypasses CDS via backend cache).
+// Pass the actual CDS tile path so backend uses it directly (no URL building
+// or z/x/y -> npix conversion). x/y are required by the route path but not
+// semantically meaningful when tilePath is provided (backend includes
+// tilePath in cache key for uniqueness).
 export function buildHipsTileProxyUrl(
   surveyPath: string,
   z: number,
-  x: number,
-  y: number,
+  tilePath: string,
 ): string {
-  const params = new URLSearchParams({ survey: surveyPath })
-  return `/pipeline/hips-tile/${z}/${x}/${y}?${params.toString()}`
+  const params = new URLSearchParams({ survey: surveyPath, tilePath })
+  // x/y in path are 0/0 placeholder (cache key uses tilePath, not x/y)
+  return `/pipeline/hips-tile/${z}/0/0?${params.toString()}`
 }
 
 /**
@@ -199,12 +208,12 @@ export async function fetchHipsTile(
   tilePath: string,
   init?: RequestInit,
 ): Promise<Response | null> {
-  // R6.99-H: prefer backend proxy (disk cache, ~50ms HIT vs 1.5s+ CDS roundtrip).
-  // Falls back to direct CDS if tilePath doesn't match Norder/N00x/N00y pattern
+  // R6.99-H-url-format: prefer backend proxy (disk cache, ~50ms HIT vs 1.5s+ CDS roundtrip).
+  // Falls back to direct CDS if tilePath doesn't match Allsky or Dir/Npix pattern
   // (e.g. index files like /Dir0/index.png).
   const coords = _parseHipsTileCoords(tilePath)
   if (coords) {
-    const proxyUrl = buildHipsTileProxyUrl(surveyPath, coords.z, coords.x, coords.y)
+    const proxyUrl = buildHipsTileProxyUrl(surveyPath, coords.z, coords.tilePath)
     try {
       const r = await fetch(proxyUrl, init)
       if (r.ok) return r

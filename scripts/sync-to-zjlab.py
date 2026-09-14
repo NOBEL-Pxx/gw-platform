@@ -1359,6 +1359,7 @@ def sync_pipeline(tg, sftp):
 
     print('[pipeline] Uploading source FIRST (so build picks up new code)...')
     tg.exec_command('mkdir -p {}/gw-pipeline/src/pipeline/agent'.format(REMOTE_ROOT), timeout=5)
+    tg.exec_command('mkdir -p {}/gw-pipeline/src/pipeline/routes'.format(REMOTE_ROOT), timeout=5)
     time.sleep(1)
 
     pipeline_dir = os.path.join(LOCAL_ROOT, 'gw-pipeline', 'src', 'pipeline')
@@ -1368,6 +1369,14 @@ def sync_pipeline(tg, sftp):
             sftp.put(os.path.join(pipeline_dir, fname),
                      '{}/gw-pipeline/src/pipeline/{}'.format(REMOTE_ROOT, fname))
             count += 1
+    # R6.99-H-2: also upload routes/*.py (was missing per [[gw-sync-routes-missing]])
+    routes_dir = os.path.join(pipeline_dir, 'routes')
+    if os.path.isdir(routes_dir):
+        for fname in os.listdir(routes_dir):
+            if fname.endswith('.py'):
+                sftp.put(os.path.join(routes_dir, fname),
+                         '{}/gw-pipeline/src/pipeline/routes/{}'.format(REMOTE_ROOT, fname))
+                count += 1
     for fname in os.listdir(os.path.join(pipeline_dir, 'agent')):
         if fname.endswith('.py'):
             sftp.put(os.path.join(pipeline_dir, 'agent', fname),
@@ -1404,6 +1413,13 @@ def sync_pipeline(tg, sftp):
             tg.exec_command('docker cp {}/gw-pipeline/src/pipeline/{} gw-pipeline:/app/src/pipeline/{}'.format(
                 REMOTE_ROOT, fname, fname), timeout=10)
             time.sleep(0.05)
+    # R6.99-H-2: also docker cp routes/*.py (was missing per [[gw-sync-routes-missing]])
+    if os.path.isdir(routes_dir):
+        for fname in os.listdir(routes_dir):
+            if fname.endswith('.py'):
+                tg.exec_command('docker cp {}/gw-pipeline/src/pipeline/routes/{} gw-pipeline:/app/src/pipeline/routes/{}'.format(
+                    REMOTE_ROOT, fname, fname), timeout=10)
+                time.sleep(0.05)
     for fname in os.listdir(os.path.join(pipeline_dir, 'agent')):
         if fname.endswith('.py'):
             tg.exec_command('docker cp {}/gw-pipeline/src/pipeline/agent/{} gw-pipeline:/app/src/pipeline/agent/{}'.format(
