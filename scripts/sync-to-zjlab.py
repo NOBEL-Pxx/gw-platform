@@ -1428,7 +1428,7 @@ def sync_pipeline(tg, sftp):
     # H1: force-recreate so new bind-mount from docker-compose.yml takes effect.
     # --no-deps: don't restart dependent services (db, redis, etc.).
     _, o, _ = tg.exec_command(
-        'cd {0} && docker compose -f docker-compose.yml up -d --force-recreate --no-deps gw-pipeline 2>&1 | tail -5'.format(REMOTE_ROOT),
+        'cd {0} && docker compose -f docker-compose.yml -f docker-compose.zjlab.yml up -d --force-recreate --no-deps gw-pipeline 2>&1 | tail -5'.format(REMOTE_ROOT),
         timeout=120,
     )
     print('  [hips-cache] ' + o.read().decode(errors='replace').strip())
