@@ -160,8 +160,38 @@ export function clearHipsCache(): void {
     })
 }
 
+
+
+// R6.99-H: Parse HiPS tile path to extract z/x/y coordinates.
+// HiPS URL pattern: /Norder{z}/N0000{x:04x}/N0000{y:04x}.{ext}
+// Returns null if path doesn't match (e.g. /Dir0/index.png — index files).
+function _parseHipsTileCoords(
+  tilePath: string,
+): { z: number; x: number; y: number } | null {
+  // Pattern: Norder<digits>/N<hex or dec>x/N<hex or dec>y.<ext>
+  const m = tilePath.match(/^Norder(\d+)\/N0*([0-9a-fA-F]+)\/N0*([0-9a-fA-F]+)\.(?:jpg|png|webp)$/i)
+  if (!m) return null
+  const z = parseInt(m[1], 10)
+  const x = parseInt(m[2], 16)  // CDS uses hex (N0000...)
+  const y = parseInt(m[3], 16)
+  if (Number.isNaN(z) || Number.isNaN(x) || Number.isNaN(y)) return null
+  return { z, x, y }
+}
+
+// R6.99-H: Build backend proxy URL for HiPS tile (bypasses CDS via backend cache).
+export function buildHipsTileProxyUrl(
+  surveyPath: string,
+  z: number,
+  x: number,
+  y: number,
+): string {
+  const params = new URLSearchParams({ survey: surveyPath })
+  return `/pipeline/hips-tile/${z}/${x}/${y}?${params.toString()}`
+}
+
 /**
  * Fetch a HiPS tile with automatic fallback.
+ * R6.99-H: uses backend proxy cache when tilePath has z/x/y coords.
  * Returns null if all endpoints fail (after 3 retries).
  */
 export async function fetchHipsTile(
@@ -169,6 +199,23 @@ export async function fetchHipsTile(
   tilePath: string,
   init?: RequestInit,
 ): Promise<Response | null> {
+  // R6.99-H: prefer backend proxy (disk cache, ~50ms HIT vs 1.5s+ CDS roundtrip).
+  // Falls back to direct CDS if tilePath doesn't match Norder/N00x/N00y pattern
+  // (e.g. index files like /Dir0/index.png).
+  const coords = _parseHipsTileCoords(tilePath)
+  if (coords) {
+    const proxyUrl = buildHipsTileProxyUrl(surveyPath, coords.z, coords.x, coords.y)
+    try {
+      const r = await fetch(proxyUrl, init)
+      if (r.ok) return r
+      console.warn('[hips] proxy fetch failed at', proxyUrl, 'status=', r.status)
+      // fall through to direct CDS
+    } catch (e) {
+      console.warn('[hips] proxy fetch error:', e)
+      // fall through to direct CDS
+    }
+  }
+
   const url = await buildHipsUrl(surveyPath, tilePath)
   try {
     const r = await fetch(url, init)

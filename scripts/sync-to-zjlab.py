@@ -1413,7 +1413,25 @@ def sync_pipeline(tg, sftp):
     for extra in ['requirements.txt', 'Dockerfile']:
         tg.exec_command('docker cp {}/gw-pipeline/{} gw-pipeline:/app/{}'.format(
             REMOTE_ROOT, extra, extra), timeout=10)
-    tg.exec_command('docker restart gw-pipeline', timeout=10)
+    # R6.99-H: ensure HiPS tile cache dir exists in container + on remote bind-mount
+    # CORRECTNESS H1: docker restart reuses existing container config (does NOT pick up new
+    # bind-mount from compose). Must use `docker compose up -d --force-recreate` so the new
+    # ./docker-data/hips_tile_cache:/var/cache/gw-hips bind-mount takes effect.
+    print('[pipeline] R6.99-H: ensuring HiPS tile cache dirs exist...')
+    _, o, _ = tg.exec_command(
+        'mkdir -p {0}/docker-data/hips_tile_cache && '
+        'docker exec gw-pipeline mkdir -p /var/cache/gw-hips && '
+        'echo "R6.99-H cache dirs ready"'.format(REMOTE_ROOT),
+        timeout=10,
+    )
+    print('  [hips-cache] ' + o.read().decode(errors='replace').strip())
+    # H1: force-recreate so new bind-mount from docker-compose.yml takes effect.
+    # --no-deps: don't restart dependent services (db, redis, etc.).
+    _, o, _ = tg.exec_command(
+        'cd {0} && docker compose -f docker-compose.yml up -d --force-recreate --no-deps gw-pipeline 2>&1 | tail -5'.format(REMOTE_ROOT),
+        timeout=120,
+    )
+    print('  [hips-cache] ' + o.read().decode(errors='replace').strip())
     time.sleep(8)
     print('[pipeline] Done')
 

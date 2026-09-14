@@ -288,11 +288,14 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_PROXY_URL: http://host.docker.internal:8899/v1/chat/completions
       THUMBNAIL_CACHE_DIR: /app/thumbnail_cache
+      HIPS_TILE_CACHE_DIR: /var/cache/gw-hips
       GW_EXCLUDE_GPL_MODELS: "${EXCLUDE_GPL_MODELS:-false}"
     volumes:
       - ./sample_data/fitsfile:/app/data:ro
       - ./docker-data/thumbnail_cache:/app/thumbnail_cache
       - ./docker-data/models:/app/models:ro
+      # R6.99-H: HiPS tile disk cache (50 GB / 200k tile LRU cap)
+      - ./docker-data/hips_tile_cache:/var/cache/gw-hips
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8200/health')\" || exit 1"]
       interval: 10s
