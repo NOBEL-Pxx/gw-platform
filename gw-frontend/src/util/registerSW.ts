@@ -1,13 +1,20 @@
-// R6.99-C: Service Worker registration glue.
+// R6.99-C + R6.99-G: Service Worker registration glue.
+//
+// R6.99-C: HiPS SW (gw-hips-v1 cache, cache-first)
+// R6.99-G: API SW (gw-api-v1 cache, stale-while-revalidate for /api/* + /v3/*)
 //
 // Registers /sw.js with scope '/' on app mount. Skips in dev to avoid stale
-// SW state across HMR. Exposes clearHipsSWCache() for debugging via devtools
-// or future "reset" buttons.
+// SW state across HMR. Exposes clearHipsSWCache() and clearApiSWCache()
+// for debugging via devtools or future "reset" buttons.
 //
-// Iron rules R6.99-C:
-//   - sw-update-ux:  on controllerchange, reload to pick up new SW (version-keyed,
-//                    not binary flag — fixes review finding PERF #5)
-//   - sw-scope:      scope '/' is required for cross-origin HiPS interception
+// Iron rules:
+//   R6.99-C-sw-update-ux:  on controllerchange, reload to pick up new SW
+//                          (version-keyed, not binary flag — fixes review
+//                          finding PERF #5)
+//   R6.99-C-sw-scope:      scope '/' is required for cross-origin HiPS
+//                          interception
+//   R6.99-G-api-cache-key: API cache name 'gw-api-v1' is the contract;
+//                          must match sw.js API_CACHE_NAME exactly
 
 const SW_URL = '/sw.js'
 const SW_SCOPE = '/'
@@ -15,13 +22,20 @@ const SW_SCOPE = '/'
 // version triggers exactly one reload; future updates in same tab also reload.
 const SW_VERSION_KEY = 'gw-sw-version'
 
+// R6.99-G: keep these in sync with sw.js
+const HIPS_SW_CACHE_NAME = 'gw-hips-v1'
+const API_SW_CACHE_NAME = 'gw-api-v1'
+
 export function isServiceWorkerAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'serviceWorker' in navigator
 }
 
 /**
- * Register the HiPS Service Worker. Safe to call multiple times; the browser
+ * Register the Service Worker. Safe to call multiple times; the browser
  * dedupes. Returns the registration (or undefined in dev).
+ *
+ * Handles both R6.99-C (HiPS) and R6.99-G (API) caches via the single
+ * /sw.js script.
  */
 export async function registerSW(): Promise<
   ServiceWorkerRegistration | undefined
@@ -70,14 +84,30 @@ export async function registerSW(): Promise<
  * tile is suspected. Returns true on success.
  */
 export async function clearHipsSWCache(): Promise<boolean> {
+  return deleteSWCache(HIPS_SW_CACHE_NAME)
+}
+
+/**
+ * R6.99-G: Clear the API Service Worker cache (/api/* + /v3/* responses).
+ * Returns true on success. Auth-bearing requests were never cached, so no
+ * user-specific data is touched.
+ */
+export async function clearApiSWCache(): Promise<boolean> {
+  return deleteSWCache(API_SW_CACHE_NAME)
+}
+
+/**
+ * Internal: delete a named SW cache, with the same defensive guards as
+ * clearHipsSWCache had in R6.99-C.
+ */
+async function deleteSWCache(cacheName: string): Promise<boolean> {
   if (!isServiceWorkerAvailable()) return false
-  // FIX TEST: assert correct cache key. Also handle jsdom where caches is undefined.
   if (typeof caches === 'undefined') return false
   try {
-    const deleted = await caches.delete('gw-hips-v1')
+    const deleted = await caches.delete(cacheName)
     return deleted
   } catch (e) {
-    console.warn('[sw] cache delete failed:', e)
+    console.warn(`[sw] cache delete failed for ${cacheName}:`, e)
     return false
   }
 }
