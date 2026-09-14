@@ -75,25 +75,25 @@ server {
     }
 
     # R6.99-H: /pipeline/ (HiPS tile proxy + cutout proxy) -> gw-pipeline:8200.
-    # Without this handler, /pipeline/hips-tile/* falls through to location /
-    # SPA fallback in locations-common.conf and serves index.html instead of
-    # proxying to gw-pipeline. Discovered 2026-09-14 during R6.99-H frontend
-    # integration: backend shipped but frontend 404s (no /pipeline/ route).
-    # location ^~ /pipeline/ (length 9) beats location / (length 1) on
-    # longest-prefix match, so this overrides the SPA fallback.
-    # Mirror of bind-mount copy in nginx-conf.d/templates/default.conf.template.
-    location ^~ /pipeline/ {
-        proxy_pass http://gw-pipeline:8200;
-        proxy_http_version 1.1;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
-        include /etc/nginx/includes/security-headers.conf;
-        include /etc/nginx/includes/csp-header.conf;
-    }
-
+    # NOTE: This block is ONLY in the image-baked fallback template. The bind-mount
+    # template at nginx-conf.d/templates/default.conf.template is the actual source of
+    # truth per [[nginx-entrypoint-envsubst-overwrites-bind-mount]]; the bind-mount
+    # template also has this block. Adding it here too causes nginx: [emerg] duplicate
+    # location "/pipeline/" because the entrypoint iterates BOTH dirs (R6.92b).
+    # R6.99-H-B operational review: image-baked template is a NO-OP fallback that
+    # only matters if bind-mount is removed. Until bind-mount is removed, this block
+    # is intentionally OMITTED to avoid duplicate. See commit 56ccdfb for context.
+    # location ^~ /pipeline/ {
+    #     proxy_pass http://gw-pipeline:8200;
+    #     proxy_http_version 1.1;
+    #     proxy_set_header Host              $host;
+    #     proxy_set_header X-Real-IP         $remote_addr;
+    #     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    #     proxy_read_timeout 60s;
+    #     include /etc/nginx/includes/security-headers.conf;
+    #     include /etc/nginx/includes/csp-header.conf;
+    # }
     error_page 500 502 503 504 /50x.html;
     location = /50x.html { root /usr/share/nginx/html; }
 }
