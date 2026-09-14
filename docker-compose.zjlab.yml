@@ -109,6 +109,13 @@ services:
         reservations: { cpus: '2.0', memory: 2G }
     environment:
       GW_EXCLUDE_GPL_MODELS: "false"  # 内部科研使用，保留 GPL 模型
+      # R6.99-H: allow gw-frontend (and other gw-net containers) to reach /pipeline/*
+      # via gw-frontend nginx -> gw-pipeline:8200. Default _DEFAULT_BRIDGE_CIDRS in
+      # app/src/pipeline/middleware/ip_whitelist.py:46-49 = (172.16.0.0/12, 10.0.0.0/8)
+      # doesn't cover the actual gw-net subnet on zjlab (typically 192.168.240.0/24
+      # or similar). Override via env var read at module import. Without this,
+      # gw-frontend -> gw-pipeline calls return 403 client_ip_not_whitelisted.
+      GW_IP_WHITELIST_BRIDGE_CIDRS: "172.16.0.0/12,10.0.0.0/8,192.168.240.0/24"
 
   gw-mcp-server:
     ports: []  # 清除 8100 映射

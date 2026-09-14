@@ -160,8 +160,6 @@ export function clearHipsCache(): void {
     })
 }
 
-
-
 // R6.99-H-url-format: Parse HiPS tile path to extract z + actual CDS tile path.
 // CDS canonical formats:
 //   /Norder{z}/Allsky.{ext}                       (low zoom, z <= 3)
@@ -173,10 +171,15 @@ function _parseHipsTileCoords(
   // Match Allsky.jpg (low zoom)
   const mAllsky = tilePath.match(/^Norder(\d+)\/Allsky\.(jpg|png|webp)$/i)
   if (mAllsky) {
-    return { z: parseInt(mAllsky[1], 10), tilePath: `Allsky.${mAllsky[2].toLowerCase()}` }
+    return {
+      z: parseInt(mAllsky[1], 10),
+      tilePath: `Allsky.${mAllsky[2].toLowerCase()}`,
+    }
   }
   // Match Dir{N}/Npix{M}.{ext}
-  const mDir = tilePath.match(/^Norder(\d+)\/(Dir\d+\/Npix\d+\.(?:jpg|png|webp))$/i)
+  const mDir = tilePath.match(
+    /^Norder(\d+)\/(Dir\d+\/Npix\d+\.(?:jpg|png|webp))$/i,
+  )
   if (mDir) {
     return { z: parseInt(mDir[1], 10), tilePath: mDir[2] }
   }
@@ -193,8 +196,12 @@ export function buildHipsTileProxyUrl(
   z: number,
   tilePath: string,
 ): string {
-  const params = new URLSearchParams({ survey: surveyPath, tilePath })
-  // x/y in path are 0/0 placeholder (cache key uses tilePath, not x/y)
+  const params = new URLSearchParams({
+    survey: surveyPath,
+    tile_path: tilePath,
+  })
+  // x/y in path are 0/0 placeholder (cache key uses tile_path, not x/y).
+  // snake_case tile_path matches FastAPI Query binding in gw-pipeline/src/pipeline/routes/hips.py:573.
   return `/pipeline/hips-tile/${z}/0/0?${params.toString()}`
 }
 
@@ -213,11 +220,20 @@ export async function fetchHipsTile(
   // (e.g. index files like /Dir0/index.png).
   const coords = _parseHipsTileCoords(tilePath)
   if (coords) {
-    const proxyUrl = buildHipsTileProxyUrl(surveyPath, coords.z, coords.tilePath)
+    const proxyUrl = buildHipsTileProxyUrl(
+      surveyPath,
+      coords.z,
+      coords.tilePath,
+    )
     try {
       const r = await fetch(proxyUrl, init)
       if (r.ok) return r
-      console.warn('[hips] proxy fetch failed at', proxyUrl, 'status=', r.status)
+      console.warn(
+        '[hips] proxy fetch failed at',
+        proxyUrl,
+        'status=',
+        r.status,
+      )
       // fall through to direct CDS
     } catch (e) {
       console.warn('[hips] proxy fetch error:', e)

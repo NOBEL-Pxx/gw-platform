@@ -74,6 +74,25 @@ server {
         include /etc/nginx/includes/csp-header.conf;
     }
 
+    # R6.99-H: /pipeline/ (HiPS tile proxy + cutout proxy) -> gw-pipeline:8200.
+    # Without this, /pipeline/hips-tile/* falls through to location / SPA fallback
+    # and returns index.html instead of proxying to backend. Discovered 2026-09-14
+    # during R6.99-H frontend integration: backend shipped but frontend 404s.
+    # location ^~ /pipeline/ (length 9) beats location / (length 1) on longest-prefix.
+    # Also covers /pipeline/hips-tile-resolve (R6.49), /pipeline/hips-thumb (R6.27f),
+    # /pipeline/hips-float (R6.27k) -- all HiPS proxy endpoints on gw-pipeline:8200.
+    location ^~ /pipeline/ {
+        proxy_pass http://gw-pipeline:8200;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        include /etc/nginx/includes/security-headers.conf;
+        include /etc/nginx/includes/csp-header.conf;
+    }
+
     error_page 500 502 503 504 /50x.html;
     location = /50x.html { root /usr/share/nginx/html; }
 }
