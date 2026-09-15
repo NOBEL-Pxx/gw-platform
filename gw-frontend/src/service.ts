@@ -107,13 +107,22 @@ instance.interceptors.response.use(
 )
 
 // ── Search ──
+// R6.99-H.b (2026-09-15): strip uuid from geoSearch params. The backend
+// SearchController.java strictly filters ES by uuid when non-empty (lines
+// 52-54), but alicptabnormal ES docs all have uuid=null — so passing uuid
+// returns 0 records, leaving Multi-band Observation empty even though
+// nearby observations exist by RA/Dec. Multi-band uses RA/Dec proximity,
+// NOT uuid; strip uuid at the service layer to make the API safer for
+// all callers.
 export const getGravitationalWave = async (
   params: GravitationalWaveParams,
 ): Promise<APIResponse<ResultListType<GravitationalWaveItem>>> => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { uuid, ...rest } = params
   return instance({
     method: 'get',
     url: '/api/app/gravitationalwave/geoSearch',
-    params,
+    params: rest,
   })
 }
 
