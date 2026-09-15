@@ -34,15 +34,18 @@ export interface PreloadResult {
 //   - One zombie: hide at 3s (per-URL hard timeout, was 6s)
 //   - Many zombies: hide at 3s, splash still shows real counts so user knows
 //   - 90% success: hide early even if 1 URL hangs forever (force-settle honest)
-const TIMEOUT_MS = 3000
 // R6.29b: Hi-Q URLs (/pipeline/hips-float, /pipeline/merge-rgb) take longer
 // than Std (CDS direct jpg) because backend reads raw 32-bit FITS and applies
 // Floyd-Steinberg dither. Empirical: Hi-Q 4-8s/tile vs Std 0.5-2s/tile.
-// Std timeout (3s) was too aggressive — Hi-Q tiles failed preload, then loaded
-// again when displayed, creating visible "慢一拍" for contrast bands.
-// Per-URL timeout is now URL-type-aware: Hi-Q gets 10s, Std keeps 3s.
+// Per-URL timeout is URL-type-aware: Hi-Q gets 10s, Std keeps 3s.
+// R6.103-J: removed unused TIMEOUT_MS global; replaced by per-type
+// MAX(STD, HI_Q) + 1.5s guard = 11.5s (see preloadImages / preloadFits).
 const STD_URL_TIMEOUT_MS = 3000
 const HI_Q_URL_TIMEOUT_MS = 10000
+// R6.103-J: 6-way concurrency cap. Chrome limits per-host connections to 6;
+// firing 50 URLs simultaneously serializes through this bottleneck AND
+// saturates bandwidth. Worker-pool pattern: 6 workers share one URL queue.
+const CONCURRENCY = 6
 
 /**
  * R6.29b: Determine per-URL timeout based on URL pattern.
@@ -79,7 +82,12 @@ export function preloadImages(
     }
     // R6.27g global guard: TIMEOUT_MS + 1.5s = 4.5s max. Per-URL 3s catches
     // zombies fast; this is the absolute backstop in case tick logic somehow misses.
-    const guard = setTimeout(finish, TIMEOUT_MS + 1500)
+    // R6.103-J: Hi-Q-aware global guard. Was TIMEOUT_MS (3s) + 1.5s = 4.5s;
+    // Hi-Q tiles take 4-8s each (per [[mbpanel-divs-thumbnails]] empirical),
+    // so splash closed before Hi-Q completed -> tiles appear one-by-one after.
+    // New guard = MAX(STD, HI_Q) + 1.5s = 11.5s backstop.
+    const MAX_PER_URL_MS = Math.max(STD_URL_TIMEOUT_MS, HI_Q_URL_TIMEOUT_MS)
+    const guard = setTimeout(finish, MAX_PER_URL_MS + 1500)
 
     const tick = () => {
       onProgress?.(finished, total)
@@ -89,38 +97,44 @@ export function preloadImages(
       }
     }
 
-    // R6.27g: rely on per-URL timeout (3s) + global guard (3s+1.5s).
-    // No force-settle needed: with per-URL 3s and parallel URLs, worst case
-    // splash wait is ~3s. R6.27e honesty preserved — timeout = fail, not success.
-    urls.forEach((url) => {
-      const img = new Image()
-      img.decoding = 'async'
-      // R6.57: HTMLImageElement.fetchPriority is standard (lib dom 2022+);
-      // the `as` cast prevents noUnusedExcessProperty warnings.
-      ;(img as HTMLImageElement).fetchPriority = 'low'
-      let settled = false
-      const settle = (succeeded: boolean) => {
-        if (settled) return
-        settled = true
-        if (succeeded) done.add(url)
-        finished++
-        tick()
+    // R6.103-J: worker-pool pattern (CONCURRENCY=6). Each worker pulls the
+    // next URL from a shared cursor when its current load settles. Matches
+    // Chrome per-host connection cap so we do not queue behind ourselves.
+    // R6.27e honesty preserved: per-URL timeout still = fail, not success.
+    let cursor = 0
+    const worker = async (): Promise<void> => {
+      while (cursor < total) {
+        const idx = cursor++
+        const url = urls[idx]
+        await new Promise<void>((resolveOne) => {
+          const img = new Image()
+          img.decoding = 'async'
+          ;(img as HTMLImageElement).fetchPriority = 'low'
+          let settled = false
+          const settle = (succeeded: boolean) => {
+            if (settled) return
+            settled = true
+            if (succeeded) done.add(url)
+            finished++
+            tick()
+            resolveOne()
+          }
+          const perTimer = setTimeout(() => settle(false), timeoutForUrl(url))
+          img.onload = () => {
+            clearTimeout(perTimer)
+            settle(true)
+          }
+          img.onerror = () => {
+            clearTimeout(perTimer)
+            settle(false)
+          }
+          img.src = url
+        })
       }
-      // R6.29b: per-URL timeout based on URL type. Hi-Q tiles (W4/K/J/H with
-      // AUTO_HI_Q) route through /pipeline/hips-float which takes 4-8s/tile.
-      // Std CDS jpg tiles finish in 0.5-2s. Previously both used 3s timeout,
-      // so Hi-Q tiles failed preload, then loaded again on display → 慢一拍.
-      const perTimer = setTimeout(() => settle(false), timeoutForUrl(url))
-      img.onload = () => {
-        clearTimeout(perTimer)
-        settle(true)
-      }
-      img.onerror = () => {
-        clearTimeout(perTimer)
-        settle(false)
-      }
-      img.src = url
-    })
+    }
+    const workerCount = Math.min(CONCURRENCY, total)
+    const workers = Array.from({ length: workerCount }, () => worker())
+    Promise.all(workers).then(finish)
   })
 }
 
@@ -141,7 +155,12 @@ export function preloadFits(
       resolved = true
       resolve(done)
     }
-    const guard = setTimeout(finish, TIMEOUT_MS + 1500)
+    // R6.103-J: Hi-Q-aware global guard. Was TIMEOUT_MS (3s) + 1.5s = 4.5s;
+    // Hi-Q tiles take 4-8s each (per [[mbpanel-divs-thumbnails]] empirical),
+    // so splash closed before Hi-Q completed -> tiles appear one-by-one after.
+    // New guard = MAX(STD, HI_Q) + 1.5s = 11.5s backstop.
+    const MAX_PER_URL_MS = Math.max(STD_URL_TIMEOUT_MS, HI_Q_URL_TIMEOUT_MS)
+    const guard = setTimeout(finish, MAX_PER_URL_MS + 1500)
 
     const tick = () => {
       onProgress?.(finished, total)
@@ -151,29 +170,37 @@ export function preloadFits(
       }
     }
 
-    urls.forEach((url) => {
-      // R6.27e: AbortController + per-URL timeout. Same HiPS/tunnel block
-      // issue as preloadImages — fetch hangs until connection timeout.
-      // R6.27e fix: perTimer ONLY aborts — .finally() handles the finished++
-      // exactly once. Old code double-counted (perTimer + .finally both
-      // bumped finished), making splash show 100% while done Set stayed empty.
-      // R6.29b: per-URL timeout from URL pattern. Hi-Q /pipeline/* gets 10s.
-      const ac = new AbortController()
-      const perTimer = setTimeout(() => ac.abort(), timeoutForUrl(url))
-      fetch(url, { credentials: 'same-origin', signal: ac.signal })
-        .then((r) => {
-          if (r.ok) done.add(url)
-          return r.blob()
+    // R6.103-J: worker-pool pattern (CONCURRENCY=6). Same rationale as
+    // preloadImages. R6.27e honesty preserved: AbortController + per-URL
+    // timeout still = fail, not success; .finally() handles finished++.
+    let cursor = 0
+    const worker = async (): Promise<void> => {
+      while (cursor < total) {
+        const idx = cursor++
+        const url = urls[idx]
+        await new Promise<void>((resolveOne) => {
+          const ac = new AbortController()
+          const perTimer = setTimeout(() => ac.abort(), timeoutForUrl(url))
+          fetch(url, { credentials: 'same-origin', signal: ac.signal })
+            .then((r) => {
+              if (r.ok) done.add(url)
+              return r.blob()
+            })
+            .catch(() => {
+              /* abort or HTTP error - don't cache */
+            })
+            .finally(() => {
+              clearTimeout(perTimer)
+              finished++
+              tick()
+              resolveOne()
+            })
         })
-        .catch(() => {
-          /* abort or HTTP error — don't cache */
-        })
-        .finally(() => {
-          clearTimeout(perTimer)
-          finished++
-          tick()
-        })
-    })
+      }
+    }
+    const workerCount = Math.min(CONCURRENCY, total)
+    const workers = Array.from({ length: workerCount }, () => worker())
+    Promise.all(workers).then(finish)
   })
 }
 

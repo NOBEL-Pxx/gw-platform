@@ -62,6 +62,9 @@ if (isNaN(minCut)) minCut = -1;
 if (isNaN(maxCut)) maxCut = 99.5;
 var fitsUrls = [];  // renamed internally but holds PNG URLs now
 var surveyTags = [];
+// R6.103-J: dedup key for swapFits. Normalized pngUrl list joined by '|'.
+// Used by handleSwapFits to short-circuit identical-payload re-clicks.
+var lastSwapKey = '';
 if (imgsParam) {
   imgsParam.split(';').filter(Boolean).forEach(function(entry) {
     var parts = entry.split(',');
@@ -203,6 +206,25 @@ function handleSwapFits(payload) {
   } else {
     items = [];
   }
+  // R6.103-J: dedup gate. User symptom (Phase 1+2): clicking the SAME
+  // thumbnail multiple times popped up MULTIPLE Firefly plot frames.
+  // Root cause: renderAll() (line 154) wipes DOM via container.innerHTML=''
+  // but never tears down Firefly's internal plot registry, so each
+  // ff.showImage('firefly-plot-' + i, opts) call with the same divId
+  // stacks another plot. The existing DEDUP_MS=800 (lines 254-278) guards
+  // only DOM `click` events on .plot-wrapper, NOT window.message events.
+  // Fix: normalize incoming items to a '|'-joined pngUrl key, compare to
+  // lastSwapKey, and return early if identical. Different images still
+  // re-render (their key differs). SurveyTag excluded from key — same
+  // image with different tag is still the same image state.
+  var newKey = items.map(function(it) {
+    return typeof it === 'string' ? it : (it && it.pngUrl) || '';
+  }).join('|');
+  if (newKey.length > 0 && newKey === lastSwapKey) {
+    if (DEBUG) console.log('[Firefly] swapFits duplicate payload, no-op');
+    return;
+  }
+  lastSwapKey = newKey;
   fitsUrls = items;
   if (DEBUG) console.log('[Firefly] swapFits:', fitsUrls.length, 'imgs');
   if (fitsUrls.length === 0) {
