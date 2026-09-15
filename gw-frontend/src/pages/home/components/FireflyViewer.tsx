@@ -114,12 +114,17 @@ export default function FireflyViewer({
     if (!hasData) return null
     // R6.20c: Firefly's showImage() runs SERVER-SIDE inside the gw-firefly
     // Docker container. The URL passed in opts.URL must be a URL that
-    // gw-firefly can resolve from its Docker network. We always use
-    // http://gw-backend:8093 because the gw-firefly container can always
-    // reach gw-backend via Docker DNS, regardless of where the user accesses
-    // from (localhost or any public tunnel URL).
+    // gw-firefly can resolve from its Docker network.
     //
-    // Previous attempts (R6.20 / R6.20b) failed:
+    // R6.103-I (2026-09-15): updated http://gw-backend:8093 → http://divs-backend:8093.
+    // Post R6.99-D the gw-backend Docker DNS alias was removed (per
+    // [[r699e-post-deploy-frontend-hygiene]] iron rule). The actual backend
+    // container_name in docker-compose.zjlab.yml is 'divs-backend'; compose
+    // service names are NOT automatic DNS aliases when container_name is set.
+    // Verified 2026-09-15: `getent hosts divs-backend` from gw-firefly returns
+    // 192.168.240.4; `getent hosts gw-backend` returns empty (NXDOMAIN).
+    //
+    // History (R6.20c intent preserved):
     //   - relative URL: Firefly rejects ("Failed- url, s3, gcs ref are all null")
     //   - window.location.origin: gw-firefly can't resolve trycloudflare.com from
     //     inside the container ("Failed- Could not connect to service")
@@ -127,8 +132,8 @@ export default function FireflyViewer({
     //     port 8093 isn't publicly exposed.
     //
     // The ONLY URL that always works for Firefly's server-side fetcher is
-    // http://gw-backend:8093/static-files/fits/... — Docker network hostname.
-    const BACKEND_INTERNAL = 'http://gw-backend:8093'
+    // http://divs-backend:8093/static-files/fits/... — Docker network hostname.
+    const BACKEND_INTERNAL = 'http://divs-backend:8093' // R6.103-I: post R6.99-D, gw-backend alias GONE per [[r699e-post-deploy-frontend-hygiene]]. Must use divs-backend.
     const encoded =
       fits
         ?.map((u) => {
@@ -208,9 +213,10 @@ export default function FireflyViewer({
       isFirstFitsLoad.current = false
       return
     }
-    // R6.20c: see initialIframeUrl comment. Always use gw-backend Docker
-    // hostname because Firefly fetches FITS server-side from its container.
-    const BACKEND_INTERNAL = 'http://gw-backend:8093'
+    // R6.20c: see initialIframeUrl comment. Always use divs-backend Docker
+    // hostname (R6.103-I: was gw-backend, removed in R6.99-D per
+    // [[r699e-post-deploy-frontend-hygiene]] iron rule).
+    const BACKEND_INTERNAL = 'http://divs-backend:8093' // R6.103-I: post R6.99-D, gw-backend alias GONE per [[r699e-post-deploy-frontend-hygiene]]. Must use divs-backend.
     const imgs = fits.map((u) => {
       const fullUrl = u.startsWith('http')
         ? u
