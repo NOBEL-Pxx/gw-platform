@@ -59,7 +59,16 @@ public class SearchController {
     @GetMapping("/geoSearch")
     public Response<?> geoSearch(@RequestParam(required = false) Double ra,
                                  @RequestParam(required = false) Double dec,
-                                 @RequestParam(required = false, defaultValue = "1") Double radius,
+                                 // R6.103-H.b (2026-09-15): default radius 1deg -> 5deg.
+                                 // The Multi-band Observation frontend (MultiBandDataPanel.tsx)
+                                 // sends ?ra=&dec= WITHOUT radius, relying on the server default.
+                                 // The previous 1deg was tuned for nearby-observation lookups
+                                 // and returned 0-2 docs from our 12-doc ES corpus. 5deg
+                                 // covers the spread of AliCPT-1 observations in the 2025-04-15
+                                 // test snapshot and is still well inside CoordinateValidator's
+                                 // 180deg ceiling. exportCsv below still uses 1deg since CSV
+                                 // export is an explicit near-target operation.
+                                 @RequestParam(required = false, defaultValue = "5") Double radius,
                                  @RequestParam(required = false, defaultValue = "") String telescope,
                                  @RequestParam(required = false) String uuid,
                                  @RequestParam(defaultValue = "1") int page,

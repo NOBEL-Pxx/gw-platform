@@ -210,12 +210,25 @@ public class SearchService {
                 GrawaveDataDO dataDO = om.convertValue(source, GrawaveDataDO.class);
                 dataDO.setId(hit.id());
                 if (dataDO.getImg_path() != null) {
+                    // R6.103-H.b (2026-09-15): also replace ":" with "_" in the
+                    // path. ES doc timestamps are stored as "14:36:04.861" (legal
+                    // in JSON) but the actual on-disk filenames saved on Windows
+                    // hosts use "14_36_04.861" because ":" is a reserved Windows
+                    // character. Without this replace, the frontend fetches
+                    // /static-files/image/<file>.png with colons and StaticFileController
+                    // returns HTTP 404. Verified: curl "<underscore>" = 200 82685B,
+                    // curl "<colon>" = 404 0B. The same fix also makes the
+                    // isImageMissingOnDisk() disk probe below find the real file.
                     dataDO.setImg_path(dataDO.getImg_path()
-                            .replace("imagefile/", "/static-files/image/"));
+                            .replace("imagefile/", "/static-files/image/")
+                            .replace(":", "_"));
                 }
                 if (dataDO.getFits_path() != null) {
+                    // R6.103-H.b: same colon->underscore fix for FITS path
+                    // (downstream /pipeline/thumbnail fetches use the same pattern).
                     dataDO.setFits_path(dataDO.getFits_path()
-                            .replace("fitsfile/", "/static-files/fits/"));
+                            .replace("fitsfile/", "/static-files/fits/")
+                            .replace(":", "_"));
                 }
                 // v4.54-r4d: probe disk for the image file. After the path
                 // rewrite above, img_path is something like
