@@ -60,6 +60,16 @@ var minCut = parseFloat(params.get('minCut'));
 var maxCut = parseFloat(params.get('maxCut'));
 if (isNaN(minCut)) minCut = -1;
 if (isNaN(maxCut)) maxCut = 99.5;
+// R6.104-K: new display params
+var gamma = parseFloat(params.get('gamma'));
+if (isNaN(gamma)) gamma = 1.0;
+var brightness = parseFloat(params.get('brightness'));
+if (isNaN(brightness)) brightness = 0.0;
+var contrast = parseFloat(params.get('contrast'));
+if (isNaN(contrast)) contrast = 1.0;
+var saturation = parseFloat(params.get('saturation'));
+if (isNaN(saturation)) saturation = 1.0;
+var cutMode = params.get('cutMode') === 'absolute' ? 'absolute' : 'percent';
 var fitsUrls = [];  // renamed internally but holds PNG URLs now
 var surveyTags = [];
 // R6.103-J: dedup key for swapFits. Normalized pngUrl list joined by '|'.
@@ -113,12 +123,13 @@ var checkInterval = setInterval(function() {
 }, 200);
 
 // Build RangeValues string for Firefly showImage
-function buildRangeValues(st, minC, maxC) {
-  // Both auto → let Firefly compute. Otherwise use valid 0-100 percentiles.
+function buildRangeValues(st, minC, maxC, mode) {
+  // Both auto → let Firefly compute. Otherwise use valid 0-100 percentiles or absolute values.
   if (minC < 0 && maxC < 0) return null;
   var lo = minC >= 0 ? minC : 0;
-  var hi = maxC >= 0 ? maxC : 100;
-  return st + ';' + lo + ';' + hi + ';Percent';
+  var hi = maxC >= 0 ? maxC : (mode === 'absolute' ? 65535 : 100);
+  var token = mode === 'absolute' ? 'Absolute' : 'Percent';
+  return st + ';' + lo + ';' + hi + ';' + token;
 }
 
 // Build showImage options for a single URL
@@ -135,7 +146,7 @@ function buildPlotOpts(url, surveyTag, overrides) {
   // Asinh smooths the faint-end quantization steps that make 2MASS look "blocky",
   // while the clip removes the background noise floor and hot pixels.
   var effSt = is2 ? 'Asinh' : st;
-  var rv = is2 ? ('Asinh;0.5;99.5;Percent') : buildRangeValues(st, mc, xc);
+  var rv = is2 ? ('Asinh;0.5;99.5;Percent') : buildRangeValues(st, mc, xc, cutMode);
   var opts = {
     URL: url,
     Title: fname || 'FITS',
@@ -145,6 +156,14 @@ function buildPlotOpts(url, surveyTag, overrides) {
     GridOn: !!g
   };
   if (rv) { opts.InitialRangeValues = rv; opts.RangeValues = rv; }
+  // R6.104-K: post-stretch coefficients as a 4-token "RangeValues" string.
+  // Firefly v4.32+ reads these from opts.PostStretchCoefficients.
+  if (Math.abs(gamma - 1.0) > 1e-6 ||
+      Math.abs(brightness) > 1e-6 ||
+      Math.abs(contrast - 1.0) > 1e-6 ||
+      Math.abs(saturation - 1.0) > 1e-6) {
+    opts.PostStretchCoefficients = gamma + ';' + brightness + ';' + contrast + ';' + saturation;
+  }
   return opts;
 }
 
@@ -252,6 +271,12 @@ window.addEventListener('message', function(e) {
   if (e.data.showGrid !== undefined) showGrid = e.data.showGrid;
   if (e.data.minCut !== undefined) minCut = e.data.minCut;
   if (e.data.maxCut !== undefined) maxCut = e.data.maxCut;
+  // R6.104-K: new params
+  if (e.data.gamma !== undefined) gamma = e.data.gamma;
+  if (e.data.brightness !== undefined) brightness = e.data.brightness;
+  if (e.data.contrast !== undefined) contrast = e.data.contrast;
+  if (e.data.saturation !== undefined) saturation = e.data.saturation;
+  if (e.data.cutMode !== undefined) cutMode = e.data.cutMode;
 
   var ff = window.firefly;
   if (!ff || !ff.initialized || typeof ff.showImage !== 'function') {
