@@ -270,6 +270,13 @@ const HIPS_PROFILE: Record<string, HipsBandProfile> = {
   SDSS: { stretch: 'linear' }, // optical
   LEGACY: { stretch: 'linear' }, // optical
   NVSS: { stretch: 'linear' }, // radio, no zodiacal
+  // R6.104-K-C: NEW surveys (per user 2026-09-25 brainstorm).
+  // Unknown surveys fall back to FALLBACK_DISPLAY_PARAMS (asinh + 3%/99.7%).
+  '2MASS-color': { stretch: 'asinh', cutMinPct: 0.5, cutMaxPct: 99.5 }, // same as 2MASS grayscale
+  'Gaia-DR3': { stretch: 'log', cutMinPct: 0.1, cutMaxPct: 99.9 },       // Gaia has wide dynamic range
+  'NVSS-color': { stretch: 'linear' },
+  'Planck-LFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 },      // CMB -> asinh
+  'Planck-HFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 },      // CMB -> asinh
 }
 
 // R6.27g: bands whose tile gets a CSS-filter slider for DS9-style manual
