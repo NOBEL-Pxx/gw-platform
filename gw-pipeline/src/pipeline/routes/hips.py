@@ -34,6 +34,19 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response
 
+# R6.104-K: extend stretch + post-stretch coefficients.
+from pipeline.stretch_ops import (
+    apply_pow2,
+    apply_equalization,
+    apply_gamma,
+    apply_brightness,
+    apply_contrast,
+    apply_saturation,
+)
+
+_R6_104K_STRETCH_VALUES = {"linear", "sqrt", "log", "asinh", "pow2", "equalization"}
+_R6_104K_CUT_MODES = {"percent", "absolute"}
+
 router = APIRouter()
 
 # Configuration
@@ -166,11 +179,22 @@ async def hips_float(
     ra: float = Query(...),
     dec: float = Query(...),
     size: int = Query(400, ge=32, le=1200),
-    stretch: str = Query("linear", description="linear/sqrt/log/asinh"),
+    stretch: str = Query("linear", description="linear/sqrt/log/asinh/pow2/equalization"),
     min_cut_pct: float = Query(None, ge=0.0, le=49.0, description="Lower percentile cut (0-49)"),
     max_cut_pct: float = Query(None, ge=51.0, le=100.0, description="Upper percentile cut (51-100)"),
     dither: bool = Query(False, description="Apply Floyd-Steinberg dithering before 8-bit quantize"),
     tile: int = Query(1, ge=1, le=4, description="HiPS tile size factor (1=128px, 4=512px)"),
+    # R6.104-K: post-stretch coefficients (AladinLite v3 §10 pipeline order).
+    gamma: float = Query(1.0, ge=0.3, le=3.0, description="R6.104-K: per-channel gamma"),
+    brightness: float = Query(0.0, ge=-0.5, le=0.5, description="R6.104-K: additive brightness"),
+    contrast: float = Query(1.0, ge=0.5, le=2.0, description="R6.104-K: multiplicative contrast"),
+    saturation: float = Query(1.0, ge=0.0, le=2.0, description="R6.104-K: HSV saturation"),
+    # R6.104-K: dual cut mode. cut_mode='percent' uses cut_min/cut_max as
+    # percentile values (existing behaviour, preserved). cut_mode='absolute'
+    # uses min_cut_abs/max_cut_abs as raw pixel values in [0, 65535].
+    cut_mode: str = Query("percent", description="R6.104-K: percent|absolute"),
+    min_cut_abs: float = Query(0.0, ge=0, le=65535, description="R6.104-K: absolute min cut"),
+    max_cut_abs: float = Query(65535.0, ge=0, le=65535, description="R6.104-K: absolute max cut"),
 ):
     """
     R6.27k: TRUE DS9-quality rendering.
@@ -195,13 +219,21 @@ async def hips_float(
     Cost: ~175KB per 400px tile (vs ~30KB JPEG) = 5.8x volume, acceptable for
     user-opt-in high-quality mode (default remains fast JPEG path).
     """
+    # R6.104-K: validate new enum params (after docstring so the docstring
+    # remains the first statement and is attached via __doc__).
+    if stretch not in _R6_104K_STRETCH_VALUES:
+        raise HTTPException(400, f"invalid stretch={stretch!r}; must be one of {sorted(_R6_104K_STRETCH_VALUES)}")
+    if cut_mode not in _R6_104K_CUT_MODES:
+        raise HTTPException(400, f"invalid cut_mode={cut_mode!r}; must be one of {sorted(_R6_104K_CUT_MODES)}")
+    if min_cut_abs >= max_cut_abs:
+        raise HTTPException(400, f"min_cut_abs ({min_cut_abs}) must be < max_cut_abs ({max_cut_abs})")
     import io
     import numpy as np
     from astropy.io import fits
     from PIL import Image as PILImage
 
     key = hashlib.sha256(
-        f"{survey}:{band}:{ra}:{dec}:{size}:{stretch}:{min_cut_pct}:{max_cut_pct}:{dither}:{tile}".encode()
+        f"{survey}:{band}:{ra}:{dec}:{size}:{stretch}:{min_cut_pct}:{max_cut_pct}:{dither}:{tile}:{gamma}:{brightness}:{contrast}:{saturation}:{cut_mode}:{min_cut_abs}:{max_cut_abs}".encode()
     ).hexdigest()[:16]
     cache_path = HIPS_CACHE_DIR / f"{key}.png"
 
@@ -259,26 +291,52 @@ async def hips_float(
 
     data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
 
-    flat = data.ravel()
-    if min_cut_pct is not None:
-        vmin = float(np.percentile(flat, min_cut_pct))
+    # R6.104-K: dual cut mode. cut_mode='percent' (default) preserves
+    # existing percentile-derived lo/hi behaviour. cut_mode='absolute' uses
+    # min_cut_abs/max_cut_abs as raw pixel bounds in [0, 65535].
+    if cut_mode == "absolute":
+        lo, hi = min_cut_abs, max_cut_abs
     else:
-        vmin = float(np.percentile(flat, 0.5))
-    if max_cut_pct is not None:
-        vmax = float(np.percentile(flat, max_cut_pct))
-    else:
-        vmax = float(np.percentile(flat, 99.5))
-    if vmax <= vmin:
-        vmax = vmin + 1.0
+        flat = data.ravel()
+        if min_cut_pct is not None:
+            lo = float(np.percentile(flat, min_cut_pct))
+        else:
+            lo = float(np.percentile(flat, 0.5))
+        if max_cut_pct is not None:
+            hi = float(np.percentile(flat, max_cut_pct))
+        else:
+            hi = float(np.percentile(flat, 99.5))
+        if hi <= lo:
+            hi = lo + 1.0
 
-    scaled = (data - vmin) / (vmax - vmin)
-    scaled = np.clip(scaled, 0.0, 1.0).astype(np.float32)
-    if stretch == "sqrt":
-        scaled = np.sqrt(scaled)
-    elif stretch == "log":
-        scaled = np.log10(1.0 + 9.0 * scaled)
-    elif stretch == "asinh":
-        scaled = np.arcsinh(scaled * 5.0) / np.arcsinh(5.0)
+    # R6.104-K: extended stretch dispatch. pow2 + equalization are NEW over
+    # R6.27j's {linear, sqrt, log, asinh}. existing branches preserved.
+    if stretch == "pow2":
+        # apply_pow2 normalizes internally from raw data + lo/hi.
+        scaled = apply_pow2(data, lo, hi)
+    elif stretch == "equalization":
+        # apply_equalization normalizes internally from raw data + lo/hi.
+        scaled = apply_equalization(data, lo, hi)
+    else:
+        scaled = (data - lo) / (hi - lo)
+        scaled = np.clip(scaled, 0.0, 1.0).astype(np.float32)
+        if stretch == "sqrt":
+            scaled = np.sqrt(scaled)
+        elif stretch == "log":
+            scaled = np.log10(1.0 + 9.0 * scaled)
+        elif stretch == "asinh":
+            scaled = np.arcsinh(scaled * 5.0) / np.arcsinh(5.0)
+
+    # R6.104-K: apply 4 post-stretch coefficients BEFORE final clip so that
+    # the quantize/8-bit conversion operates on the final pixel values.
+    # Pipeline order per AladinLite v3 §10: cut -> stretch -> colormap ->
+    # reverse -> gamma -> brightness -> contrast -> saturation.
+    # For grayscale /hips-float endpoint saturation is a no-op on 1-channel
+    # arrays (handled inside apply_saturation).
+    scaled = apply_gamma(scaled, gamma)
+    scaled = apply_brightness(scaled, brightness)
+    scaled = apply_contrast(scaled, contrast)
+    scaled = apply_saturation(scaled, saturation)
 
     scaled = np.clip(scaled, 0.0, 1.0)
 
