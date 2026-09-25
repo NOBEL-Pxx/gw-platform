@@ -76,3 +76,15 @@ def apply_saturation(rgb: np.ndarray, saturation: float) -> np.ndarray:
     gray = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
     gray = gray[..., np.newaxis]
     return np.clip(gray + (rgb - gray) * saturation, 0.0, 1.0)
+
+def resolve_cds_stretch(stretch: str) -> str:
+    """Map a local stretch name to the value sent to CDS hips2fits.
+
+    CDS hips2fits returns raw FITS regardless of `stretch` when `format=fits`
+    (verified 2026-09-26: linear/log/asinh are byte-identical), but it still
+    VALIDATES the value and rejects R6.104-K's local-only stretches (pow2,
+    equalization) with HTTP 400. Map those to "linear" so CDS returns raw data
+    and the local dispatch applies the real stretch.
+    """
+    return "linear" if stretch in ("pow2", "equalization") else stretch
+

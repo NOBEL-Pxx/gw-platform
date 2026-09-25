@@ -23,6 +23,7 @@ from pipeline.stretch_ops import (
     apply_brightness,
     apply_contrast,
     apply_saturation,
+    resolve_cds_stretch,
 )
 
 
@@ -151,3 +152,14 @@ def test_equalization_idempotent():
     twice = apply_equalization(once, 0.0, 1.0)
     # Should be very close (idempotent up to histogram quantization).
     np.testing.assert_allclose(once, twice, atol=0.02)
+
+# T5-fix: resolve_cds_stretch maps local-only stretches to linear for CDS
+def test_resolve_cds_stretch_maps_new_to_linear():
+    assert resolve_cds_stretch("pow2") == "linear"
+    assert resolve_cds_stretch("equalization") == "linear"
+
+
+def test_resolve_cds_stretch_passes_legacy_through():
+    for s in ("linear", "sqrt", "log", "asinh"):
+        assert resolve_cds_stretch(s) == s
+

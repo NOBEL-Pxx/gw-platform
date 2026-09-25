@@ -42,6 +42,7 @@ from pipeline.stretch_ops import (
     apply_brightness,
     apply_contrast,
     apply_saturation,
+    resolve_cds_stretch,
 )
 
 _R6_104K_STRETCH_VALUES = {"linear", "sqrt", "log", "asinh", "pow2", "equalization"}
@@ -256,7 +257,10 @@ async def hips_float(
         f"?hips={hips_id}"
         f"&ra={ra}&dec={dec}&fov={3 * (size / 400):.4f}"
         f"&width={size}&height={size}"
-        f"&stretch={stretch}&format=fits"
+        # R6.104-K: CDS validates `stretch` and rejects pow2/equalization (HTTP 400)
+        # even though it returns raw FITS for format=fits. Map local-only
+        # stretches to "linear" so the local dispatch applies the real stretch.
+        f"&stretch={resolve_cds_stretch(stretch)}&format=fits"
     )
 
     try:
