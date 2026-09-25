@@ -13,8 +13,15 @@ import {
   Component,
   type ReactNode,
 } from 'react'
-import { Select, Switch, Tooltip, InputNumber, Button, Slider } from 'antd'
+import { Switch, Tooltip } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import {
+  DEFAULT_DISPLAY_PARAMS,
+  clampDisplayParams,
+  type ColorTable,
+  type StretchType,
+} from '@/components/DisplayControls/types'
+import { DisplayControls, useDisplayControlsState } from '@/components/DisplayControls'
 
 // R6.67.4: minimal local ErrorBoundary, co-located to avoid the
 // cross-chunk default-export bug (React error #130).
@@ -44,17 +51,36 @@ class LocalErrorBoundary extends Component<
   }
 }
 
-const COLOR_TABLES: Record<string, number> = {
-  Grayscale: 0,
-  Heat: 4,
-  Rainbow: 8,
-  Viridis: 16,
-  Magma: 17,
-  Inferno: 18,
-  Plasma: 19,
-  Cubehelix: 20,
+// R6.104-K: map DisplayParams ColorTable names → Firefly v4.32 integer IDs.
+// cividis/parula/native have no exact v4.32 equivalent → viridis(16)/grayscale(0).
+const FIREFLY_COLOR_TABLE_IDS: Record<ColorTable, number> = {
+  grayscale: 0,
+  rainbow: 8,
+  viridis: 16,
+  magma: 17,
+  inferno: 18,
+  plasma: 19,
+  cubehelix: 20,
+  cividis: 16,
+  parula: 16,
+  native: 0,
 }
-const STRETCH_OPTIONS = ['Linear', 'Log', 'Sqrt', 'Asinh'] as const
+function colorTableFor(c: ColorTable): number {
+  return FIREFLY_COLOR_TABLE_IDS[c] ?? 16
+}
+// R6.104-K: map DisplayParams StretchType (AladinLite lowercase) → Firefly
+// v4.32 StretchType names (capitalized). pow2 → Power, equalization → HistogramEq.
+const FIREFLY_STRETCH_NAMES: Record<StretchType, string> = {
+  linear: 'Linear',
+  sqrt: 'Sqrt',
+  log: 'Log',
+  asinh: 'Asinh',
+  pow2: 'Power',
+  equalization: 'HistogramEq',
+}
+function stretchFor(s: StretchType): string {
+  return FIREFLY_STRETCH_NAMES[s] ?? 'Log'
+}
 
 interface FireflyViewerProps {
   fits?: string[]
@@ -75,11 +101,10 @@ export default function FireflyViewer({
   hipsSurvey,
   mount = false,
 }: FireflyViewerProps): JSX.Element {
-  const [colorTable, setColorTable] = useState<number>(16)
-  const [stretch, setStretch] = useState<string>('Log')
+  // R6.104-K-A: DisplayParams is the SSOT. showGrid/iframeKey are Firefly-viewer
+  // concerns, not part of DisplayParams, so they stay local.
+  const { value: display, setValue: setDisplay } = useDisplayControlsState(DEFAULT_DISPLAY_PARAMS)
   const [showGrid, setShowGrid] = useState(true)
-  const [minCut, setMinCut] = useState<number>(-1)
-  const [maxCut, setMaxCut] = useState<number>(99.5)
   const [iframeKey, setIframeKey] = useState(0)
   const postMsgTimer = useRef<ReturnType<typeof setTimeout>>()
   // R6.17: persistent ref to skip first swapFits (first load = iframe load).
@@ -97,8 +122,11 @@ export default function FireflyViewer({
   // 2MASS auto-preset
   useEffect(() => {
     if (is2MASS) {
-      setStretch('Asinh')
-      if (minCut === -1) setMinCut(0.5)
+      setDisplay(clampDisplayParams({
+        ...display,
+        stretch: 'asinh',
+        minCut: display.minCut === -1 ? 0.5 : display.minCut,
+      }))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [is2MASS])
@@ -151,15 +179,25 @@ export default function FireflyViewer({
       '/firefly-viewer.html?imgs=' +
       encoded +
       '&color=' +
-      colorTable +
+      colorTableFor(display.colormap) +
       '&stretch=' +
-      stretch +
+      stretchFor(display.stretch) +
       '&grid=' +
       (showGrid ? '1' : '0') +
       '&minCut=' +
-      minCut +
+      display.minCut +
       '&maxCut=' +
-      maxCut
+      display.maxCut +
+      '&cutMode=' +
+      display.cutMode +
+      '&gamma=' +
+      display.gamma +
+      '&brightness=' +
+      display.brightness +
+      '&contrast=' +
+      display.contrast +
+      '&saturation=' +
+      display.saturation
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasData]) // R6.19: depend on hasData so URL is built when fits becomes non-empty
@@ -179,11 +217,17 @@ export default function FireflyViewer({
       iframe.contentWindow?.postMessage(
         {
           type: 'updateDisplay',
-          colorTable,
-          stretch,
+          // R6.104-K-A: send full DisplayParams SSOT
+          colorTable: colorTableFor(display.colormap),
+          stretch: stretchFor(display.stretch),
           showGrid,
-          minCut,
-          maxCut,
+          minCut: display.minCut,
+          maxCut: display.maxCut,
+          cutMode: display.cutMode,
+          gamma: display.gamma,
+          brightness: display.brightness,
+          contrast: display.contrast,
+          saturation: display.saturation,
         },
         '*',
       )
@@ -191,7 +235,7 @@ export default function FireflyViewer({
     return () => {
       if (postMsgTimer.current) clearTimeout(postMsgTimer.current)
     }
-  }, [colorTable, stretch, showGrid, minCut, maxCut])
+  }, [display, showGrid])
 
   // R6.17b: capture initial src once. Subsequent fits changes do NOT
   // update iframe.src (which would reload firefly_loader.js -> 5-10s).
@@ -241,10 +285,6 @@ export default function FireflyViewer({
   }, [])
 
   const reload = useCallback(() => setIframeKey((k) => k + 1), [])
-  const resetCuts = useCallback(() => {
-    setMinCut(-1)
-    setMaxCut(99.5)
-  }, [])
 
   return (
     <LocalErrorBoundary>
@@ -252,34 +292,24 @@ export default function FireflyViewer({
         className='w-full h-full flex flex-col'
         style={{ background: '#0A0F24' }}
       >
-        {/* Toolbar row 1: Color, Stretch, Grid */}
+        {/* R6.104-K: unified display controls (stretch / colormap / cut / gamma / ...) */}
+        <DisplayControls
+          value={display}
+          onChange={setDisplay}
+          onAutoStretch={() => {
+            // R6.104-K-C limitation: WebGL canvas inside cross-origin iframe
+            // cannot be read from parent (tainted-canvas rule). Approximate
+            // AladinLite 'Local cut' by clipping 2.5%/99.5% percentiles on the
+            // user-facing params; re-render goes via postMessage updateDisplay.
+            setDisplay(clampDisplayParams({ ...display, minCut: 2.5, maxCut: 99.5, cutMode: 'percent' }))
+          }}
+        />
+
+        {/* Auxiliary row: Grid + 2MASS badge + Reload (Firefly-viewer concerns) */}
         <div
           className='flex items-center gap-2 px-3 py-1.5 border-b border-white/6 flex-shrink-0 flex-wrap'
-          style={{ background: 'rgba(255,255,255,0.04)' }}
+          style={{ background: 'rgba(255,255,255,0.02)' }}
         >
-          <span className='text-white/60 text-xs font-medium shrink-0'>
-            Color:
-          </span>
-          <Select
-            size='small'
-            value={colorTable}
-            onChange={setColorTable}
-            style={{ width: 100 }}
-            options={Object.entries(COLOR_TABLES).map(([l, v]) => ({
-              label: l,
-              value: v,
-            }))}
-          />
-          <span className='text-white/60 text-xs font-medium shrink-0'>
-            Stretch:
-          </span>
-          <Select
-            size='small'
-            value={stretch}
-            onChange={setStretch}
-            style={{ width: 80 }}
-            options={STRETCH_OPTIONS.map((s) => ({ label: s, value: s }))}
-          />
           <Tooltip title='Grid'>
             <Switch
               size='small'
@@ -305,61 +335,6 @@ export default function FireflyViewer({
             <ReloadOutlined className='mr-1' />
             Reload
           </button>
-        </div>
-
-        {/* Toolbar row 2: Contrast cuts — ALWAYS visible */}
-        <div
-          className='flex items-center gap-2 px-3 py-1.5 border-b border-white/6 flex-shrink-0 flex-wrap'
-          style={{ background: 'rgba(255,255,255,0.02)' }}
-        >
-          <span className='text-white/50 text-xs shrink-0'>Clip:</span>
-          <InputNumber
-            size='small'
-            min={-1}
-            max={100}
-            step={0.5}
-            value={minCut}
-            onChange={(v) => setMinCut(v ?? -1)}
-            style={{ width: 64 }}
-            placeholder='Auto'
-            className='cut-input'
-          />
-          <div className='flex-1' style={{ minWidth: 100, maxWidth: 200 }}>
-            <Slider
-              range
-              min={-1}
-              max={100}
-              step={0.5}
-              value={[minCut, maxCut]}
-              onChange={([lo, hi]) => {
-                setMinCut(lo)
-                setMaxCut(hi)
-              }}
-              tooltip={{
-                formatter: (v?: number) => (v === -1 ? 'Auto' : v + '%'),
-              }}
-              className='cut-slider'
-            />
-          </div>
-          <InputNumber
-            size='small'
-            min={-1}
-            max={100}
-            step={0.5}
-            value={maxCut}
-            onChange={(v) => setMaxCut(v ?? 99.5)}
-            style={{ width: 64 }}
-            placeholder='99.5'
-            className='cut-input'
-          />
-          <Button
-            size='small'
-            onClick={resetCuts}
-            style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}
-          >
-            Reset
-          </Button>
-          {is2MASS && <span className='text-white/30 text-xs'>%</span>}
         </div>
 
         {/* Viewer */}
