@@ -64,6 +64,24 @@ from .routes_v449 import register_routes_v449
 from .routes_v449_hips import register_routes as register_routes_v449_hips
 from .routes_v450 import register_routes_v450
 
+# R6.104-K: extend stretch + post-stretch coefficients (shared with routes/hips.py).
+from .stretch_ops import (
+    apply_pow2,
+    apply_equalization,
+    apply_gamma,
+    apply_brightness,
+    apply_contrast,
+    apply_saturation,
+)
+
+# R6.104-K: stretch enum includes T2 values + legacy "percentile" for
+# backward compat with existing merge-rgb callers (the existing default
+# "percentile" behaves like "linear" with percentile-derived cut).
+_R6_104K_MERGE_STRETCH_VALUES = {
+    "linear", "sqrt", "log", "asinh", "pow2", "equalization", "percentile",
+}
+_R6_104K_CUT_MODES = {"percent", "absolute"}
+
 class DLClassifyRequest(BaseModel):
     """Request body for DL model inference endpoints (v4.18)."""
     filename: str = Field(..., min_length=1, description="FITS filename in the data directory")
@@ -1389,6 +1407,17 @@ async def merge_rgb(
     r_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Red channel gamma correction"),
     g_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Green channel gamma"),
     b_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Blue channel gamma"),
+    # R6.104-K: post-stretch coefficients (AladinLite v3 Sec 10 pipeline order).
+    gamma: float = Query(1.0, ge=0.3, le=3.0, description="R6.104-K: global gamma (after ch_gamma)"),
+    brightness: float = Query(0.0, ge=-0.5, le=0.5, description="R6.104-K: additive brightness"),
+    contrast: float = Query(1.0, ge=0.5, le=2.0, description="R6.104-K: multiplicative contrast"),
+    saturation: float = Query(1.0, ge=0.0, le=2.0, description="R6.104-K: HSV saturation (applied on final RGB)"),
+    # R6.104-K: dual cut mode. cut_mode='percent' (default) preserves the
+    # existing percentile-derived lo/hi behaviour. cut_mode='absolute' uses
+    # min_cut_abs/max_cut_abs as raw pixel bounds in [0, 65535].
+    cut_mode: str = Query("percent", description="R6.104-K: percent|absolute"),
+    min_cut_abs: float = Query(0.0, ge=0, le=65535, description="R6.104-K: absolute min cut"),
+    max_cut_abs: float = Query(65535.0, ge=0, le=65535, description="R6.104-K: absolute max cut"),
     q_low: float = Query(1.0, ge=0.1, le=20.0, description="Lower percentile for stretch"),
     q_high: float = Query(99.0, ge=80.0, le=99.9, description="Upper percentile for stretch"),
     fmt: str = Query("png", description="Output format: png (raster) or pdf (vector, for publication)"),
@@ -1420,6 +1449,23 @@ async def merge_rgb(
 
     Returns: PNG (raster) or PDF (vector with embedded image) based on fmt parameter.
     """
+    # R6.104-K: validate new enum params (after docstring so the docstring
+    # remains the first statement and is attached via __doc__).
+    if stretch not in _R6_104K_MERGE_STRETCH_VALUES:
+        raise HTTPException(
+            400,
+            f"invalid stretch={stretch!r}; must be one of {sorted(_R6_104K_MERGE_STRETCH_VALUES)}",
+        )
+    if cut_mode not in _R6_104K_CUT_MODES:
+        raise HTTPException(
+            400,
+            f"invalid cut_mode={cut_mode!r}; must be one of {sorted(_R6_104K_CUT_MODES)}",
+        )
+    if min_cut_abs >= max_cut_abs:
+        raise HTTPException(
+            400,
+            f"min_cut_abs ({min_cut_abs}) must be < max_cut_abs ({max_cut_abs})",
+        )
     import io, numpy as np
     from astropy.io import fits
     from PIL import Image as PILImage
@@ -1478,28 +1524,47 @@ async def merge_rgb(
         def _process_channel(data: np.ndarray, ch_stretch: str, ch_q_low: float, ch_q_high: float, ch_gamma: float) -> np.ndarray:
             data = np.flipud(data)  # FITS bottom-left → image top-left
             data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
-            flat = data.ravel()
-            nonzero = flat[flat != 0]
-            if len(nonzero) > 0:
-                flat = nonzero
-            vmin = np.percentile(flat, ch_q_low) if ch_q_low is not None else np.percentile(flat, 1.0)
-            vmax = np.percentile(flat, ch_q_high) if ch_q_high is not None else np.percentile(flat, 99.0)
-            if vmax <= vmin:
-                vmax = vmin + 1
-            if ch_stretch == "asinh":
-                scale = (vmax - vmin) / 2.0
-                scaled = np.arcsinh((data - vmin) / scale) / np.arcsinh(1.0)
+            # R6.104-K: dual cut mode. percent uses percentile-derived lo/hi
+            # (existing behaviour, preserved). absolute uses min_cut_abs /
+            # max_cut_abs as raw pixel bounds.
+            if cut_mode == "absolute":
+                lo, hi = min_cut_abs, max_cut_abs
+            else:
+                flat = data.ravel()
+                nonzero = flat[flat != 0]
+                if len(nonzero) > 0:
+                    flat = nonzero
+                lo = np.percentile(flat, ch_q_low) if ch_q_low is not None else np.percentile(flat, 1.0)
+                hi = np.percentile(flat, ch_q_high) if ch_q_high is not None else np.percentile(flat, 99.0)
+            if hi <= lo:
+                hi = lo + 1.0
+            # R6.104-K: extended stretch dispatch. pow2 + equalization
+            # normalize from raw data + lo/hi internally.
+            if ch_stretch == "pow2":
+                stretched = apply_pow2(data, lo, hi)
+            elif ch_stretch == "equalization":
+                stretched = apply_equalization(data, lo, hi)
+            elif ch_stretch == "asinh":
+                scale = (hi - lo) / 2.0
+                scaled = np.arcsinh((data - lo) / scale) / np.arcsinh(1.0)
                 stretched = np.clip(scaled, 0, 1)
             elif ch_stretch == "log":
-                scaled = np.clip((data - vmin) / (vmax - vmin), 1e-6, None)
+                scaled = np.clip((data - lo) / (hi - lo), 1e-6, None)
                 stretched = np.log10(1 + 999 * scaled) / 3.0
                 stretched = np.clip(stretched, 0, 1)
             elif ch_stretch == "sqrt":
-                stretched = np.sqrt(np.clip((data - vmin) / (vmax - vmin), 0, 1))
+                stretched = np.sqrt(np.clip((data - lo) / (hi - lo), 0, 1))
             else:  # linear / percentile
-                stretched = np.clip((data - vmin) / (vmax - vmin), 0, 1)
+                stretched = np.clip((data - lo) / (hi - lo), 0, 1)
+            # Per-channel legacy gamma (preserved).
             if ch_gamma != 1.0:
                 stretched = np.power(stretched, ch_gamma)
+            # R6.104-K: apply global gamma/brightness/contrast per channel.
+            # (Saturation is a no-op on 1-channel arrays; applied on final
+            # RGB composite below.)
+            stretched = apply_gamma(stretched, gamma)
+            stretched = apply_brightness(stretched, brightness)
+            stretched = apply_contrast(stretched, contrast)
 
             # Floyd-Steinberg dither (1-LSB error diffusion)
             if dither:
@@ -1536,7 +1601,11 @@ async def merge_rgb(
             channels.append(np.array(img))
             channel_labels.append(f"{label}={hips_id}")
 
-        rgb = np.stack(channels, axis=-1)
+        # R6.104-K: apply saturation on the final 3-channel RGB composite
+        # (per-channel saturation is a no-op; global saturation works on hue).
+        rgb = np.stack(channels, axis=-1).astype(np.float32) / 255.0
+        rgb = apply_saturation(rgb, saturation)
+        rgb = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
         rgb_img = _PILImage.fromarray(rgb, mode='RGB')
         buf = _io.BytesIO()
         rgb_img.save(buf, format='PNG', optimize=True)
@@ -1593,37 +1662,42 @@ async def merge_rgb(
         if len(nonzero) > 0:
             flat = nonzero
 
-        if ch_stretch == "asinh":
-            # R6.7b2: per-channel percentile + gamma for rebalancing
-            # channels with very different backgrounds (e.g., W4 vs W1).
+        # R6.104-K: dual cut mode. cut_mode='absolute' overrides
+        # percentile-derived lo/hi with raw pixel bounds.
+        if cut_mode == "absolute":
+            vmin, vmax = min_cut_abs, max_cut_abs
+        else:
             vmin = np.percentile(flat, ch_q_low)
             vmax = np.percentile(flat, ch_q_high)
             if vmax <= vmin:
                 vmax = vmin + 1
+        # R6.104-K: extended stretch dispatch. pow2 + equalization
+        # normalize from raw data + lo/hi internally; legacy branches keep
+        # their pre-computed vmin/vmax path.
+        if ch_stretch == "pow2":
+            stretched = apply_pow2(data, vmin, vmax)
+        elif ch_stretch == "equalization":
+            stretched = apply_equalization(data, vmin, vmax)
+        elif ch_stretch == "asinh":
             scale = (vmax - vmin) / 2.0
             scaled = np.arcsinh((data - vmin) / scale) / np.arcsinh(1.0)
             stretched = np.clip(scaled, 0, 1)
-            if ch_gamma != 1.0:
-                stretched = np.power(stretched, ch_gamma)
         elif ch_stretch == "log":
-            vmin = np.percentile(flat, ch_q_low)
-            vmax = np.percentile(flat, ch_q_high)
-            if vmax <= vmin:
-                vmax = vmin + 1
             scaled = (data - vmin) / (vmax - vmin)
             scaled = np.clip(scaled, 1e-6, None)
             stretched = np.log10(1 + 999 * scaled) / 3.0
             stretched = np.clip(stretched, 0, 1)
-            if ch_gamma != 1.0:
-                stretched = np.power(stretched, ch_gamma)
-        else:  # percentile (default, ch_stretch != asinh/log)
-            vmin = np.percentile(flat, ch_q_low)
-            vmax = np.percentile(flat, ch_q_high)
-            if vmax <= vmin:
-                vmax = vmin + 1
+        elif ch_stretch == "sqrt":
+            stretched = np.sqrt(np.clip((data - vmin) / (vmax - vmin), 0, 1))
+        else:  # percentile / linear (default)
             stretched = np.clip((data - vmin) / (vmax - vmin), 0, 1)
-            if ch_gamma != 1.0:
-                stretched = np.power(stretched, ch_gamma)
+        # Per-channel legacy gamma (preserved).
+        if ch_gamma != 1.0:
+            stretched = np.power(stretched, ch_gamma)
+        # R6.104-K: apply global gamma/brightness/contrast per channel.
+        stretched = apply_gamma(stretched, gamma)
+        stretched = apply_brightness(stretched, brightness)
+        stretched = apply_contrast(stretched, contrast)
 
         stretched = (stretched * 255).astype(np.uint8)
         # Resize to target size using PIL (handles different source dimensions)
@@ -1632,8 +1706,10 @@ async def merge_rgb(
         channels.append(np.array(img))
         channel_labels.append(f"{label}={filename.split('/')[-1].replace('.fits','')[-20:]}")
 
-    # Stack channels into RGB image
-    rgb = np.stack(channels, axis=-1)  # (H, W, 3)
+    # R6.104-K: apply saturation on the final 3-channel RGB composite.
+    rgb = np.stack(channels, axis=-1).astype(np.float32) / 255.0  # (H, W, 3)
+    rgb = apply_saturation(rgb, saturation)
+    rgb = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
     rgb_img = PILImage.fromarray(rgb, mode='RGB')
     buf = io.BytesIO()
 
