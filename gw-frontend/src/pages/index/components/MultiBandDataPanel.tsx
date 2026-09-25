@@ -16,6 +16,17 @@ import PreloadSplash from '@/components/PreloadSplash'
 // Bypasses React reconciliation entirely — slider drag paints at the
 // browser's native rate (< 16ms instead of 50-200ms).
 import { useContrastDOM } from '@/hooks/useContrastDOM'
+import { DEFAULT_DISPLAY_PARAMS, type DisplayParams } from '@/components/DisplayControls/types'
+
+// R6.104-K T13 bridge: legacy scalar contrast (-100..100) -> DisplayParams.
+// Temporary — T16 replaces contrastAdjust with per-band DisplayParams.
+function scalarDisplayParams(v: number): DisplayParams {
+  return {
+    ...DEFAULT_DISPLAY_PARAMS,
+    contrast: 1 + v / 100,
+    brightness: v / 200,
+  }
+}
 
 type ViewerType = 'aladin' | 'firefly' // R6.8a: 'image' tab removed
 // R6.8a: only Aladin (FITS overlay + WCS + HiPS) and Firefly (HiPS-native
@@ -830,7 +841,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     dom.setActiveBand(currentBand)
     if (currentBand) {
       const v = contrastAdjust[currentBand] ?? 0
-      dom.setContrast(currentBand, v)
+      dom.setDisplay(currentBand, scalarDisplayParams(v))
     } else {
       // No band (RGB composite) — clear any leftover filter on the big image.
       const big = dom.bigImgRef.current
@@ -1338,7 +1349,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                           onChange={(v) => {
                             const value = v as number
                             // R6.27i: direct DOM mutation for ms-level response.
-                            contrastDOM.setContrast(entry.item.band, value)
+                            contrastDOM.setDisplay(entry.item.band, scalarDisplayParams(value))
                             // Persist for next session (parallel to the visual update).
                             updateContrast(entry.item.band, value)
                           }}
