@@ -1,5 +1,13 @@
 import { useState, useCallback } from 'react'
-import { Select, Tooltip, InputNumber, Slider, Button, Segmented, Collapse } from 'antd'
+import {
+  Select,
+  Tooltip,
+  InputNumber,
+  Slider,
+  Button,
+  Segmented,
+  Collapse,
+} from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import {
   type DisplayParams,
@@ -23,41 +31,66 @@ interface DisplayControlsProps {
   compact?: boolean
   /** Show Reset-all button. */
   showReset?: boolean
+  /**
+   * R6.104-K: show the colormap grid. False for consumers that render
+   * server-side (MultiBandDataPanel gets grayscale HiPS JPEGs, so a LUT
+   * choice would be a dead control). Defaults to true.
+   */
+  showColor?: boolean
 }
 
 export function DisplayControls({
-  value, onChange, histogram = null,
-  onAutoStretch, compact = false, showReset = true,
+  value,
+  onChange,
+  histogram = null,
+  onAutoStretch,
+  compact = false,
+  showReset = true,
+  showColor = true,
 }: DisplayControlsProps) {
-  const set = useCallback(<K extends keyof DisplayParams>(k: K, v: DisplayParams[K]) => {
-    onChange(clampDisplayParams({ ...value, [k]: v }))
-  }, [value, onChange])
+  const set = useCallback(
+    <K extends keyof DisplayParams>(k: K, v: DisplayParams[K]) => {
+      onChange(clampDisplayParams({ ...value, [k]: v }))
+    },
+    [value, onChange],
+  )
 
   const cutMin = value.cutMode === 'percent' ? -1 : 0
   const cutMax = value.cutMode === 'percent' ? 100 : 65535
   const cutStep = value.cutMode === 'percent' ? 0.5 : 1
 
   return (
-    <div className='flex flex-col gap-2 p-2'
-         style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
+    <div
+      className='flex flex-col gap-2 p-2'
+      style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}
+    >
       {/* Row 1: Stretch + Color + Auto + Reset */}
       <div className='flex items-center gap-2 flex-wrap'>
-        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>Stretch</span>
+        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+          Stretch
+        </span>
         <Select<StretchType>
           size='small'
           value={value.stretch}
           onChange={(v) => set('stretch', v)}
           style={{ width: 100 }}
           options={(Object.keys(STRETCH_LABELS) as StretchType[]).map((s) => ({
-            label: STRETCH_LABELS[s], value: s,
+            label: STRETCH_LABELS[s],
+            value: s,
           }))}
         />
-        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>Color</span>
-        <ColorPaletteGrid
-          value={value.colormap}
-          onChange={(v) => set('colormap', v)}
-          compact={compact}
-        />
+        {showColor && (
+          <>
+            <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+              Color
+            </span>
+            <ColorPaletteGrid
+              value={value.colormap}
+              onChange={(v) => set('colormap', v)}
+              compact={compact}
+            />
+          </>
+        )}
         {onAutoStretch && (
           <Tooltip title='Auto-stretch (2.5% / 99.5% percentile clip from current viewport)'>
             <Button size='small' onClick={onAutoStretch} disabled={!histogram}>
@@ -67,8 +100,11 @@ export function DisplayControls({
         )}
         {showReset && (
           <Tooltip title='Reset to defaults'>
-            <Button size='small' icon={<ReloadOutlined />}
-                    onClick={() => onChange(DEFAULT_DISPLAY_PARAMS)}>
+            <Button
+              size='small'
+              icon={<ReloadOutlined />}
+              onClick={() => onChange(DEFAULT_DISPLAY_PARAMS)}
+            >
               Reset
             </Button>
           </Tooltip>
@@ -81,7 +117,10 @@ export function DisplayControls({
           size='small'
           value={value.cutMode}
           onChange={(v) => set('cutMode', v as DisplayParams['cutMode'])}
-          options={[{ label: '%', value: 'percent' }, { label: 'abs', value: 'absolute' }]}
+          options={[
+            { label: '%', value: 'percent' },
+            { label: 'abs', value: 'absolute' },
+          ]}
         />
         <InputNumber
           size='small'
@@ -100,10 +139,21 @@ export function DisplayControls({
             max={cutMax}
             step={cutStep}
             value={[value.minCut, value.maxCut]}
-            onChange={([lo, hi]) => onChange(clampDisplayParams({
-              ...value, minCut: lo as number, maxCut: hi as number,
-            }))}
-            tooltip={{ formatter: (v) => v === -1 ? 'Auto' : `${v}${value.cutMode === 'percent' ? '%' : ''}` }}
+            onChange={([lo, hi]) =>
+              onChange(
+                clampDisplayParams({
+                  ...value,
+                  minCut: lo as number,
+                  maxCut: hi as number,
+                }),
+              )
+            }
+            tooltip={{
+              formatter: (v) =>
+                v === -1
+                  ? 'Auto'
+                  : `${v}${value.cutMode === 'percent' ? '%' : ''}`,
+            }}
           />
         </div>
         <InputNumber
@@ -112,7 +162,12 @@ export function DisplayControls({
           max={cutMax}
           step={cutStep}
           value={value.maxCut}
-          onChange={(v) => set('maxCut', (v ?? (value.cutMode === 'percent' ? 99.5 : 65535)) as number)}
+          onChange={(v) =>
+            set(
+              'maxCut',
+              (v ?? (value.cutMode === 'percent' ? 99.5 : 65535)) as number,
+            )
+          }
           style={{ width: 72 }}
           placeholder={value.cutMode === 'percent' ? '99.5' : '65535'}
         />
@@ -130,12 +185,16 @@ export function DisplayControls({
       <Collapse
         ghost
         size='small'
-        items={[{
-          key: 'advanced',
-          label: compact ? '' : 'Advanced (γ / brightness / contrast / saturation)',
-          children: <AdvancedSliders value={value} onChange={onChange} />,
-        }]}
-        defaultActiveKey={compact ? [] : []}  // collapsed by default
+        items={[
+          {
+            key: 'advanced',
+            label: compact
+              ? ''
+              : 'Advanced (γ / brightness / contrast / saturation)',
+            children: <AdvancedSliders value={value} onChange={onChange} />,
+          },
+        ]}
+        defaultActiveKey={compact ? [] : []} // collapsed by default
       />
     </div>
   )
@@ -143,6 +202,8 @@ export function DisplayControls({
 
 /** Hook for components that want DisplayControls state managed internally. */
 export function useDisplayControlsState(initial?: Partial<DisplayParams>) {
-  const [value, setValue] = useState<DisplayParams>(() => clampDisplayParams(initial ?? {}))
+  const [value, setValue] = useState<DisplayParams>(() =>
+    clampDisplayParams(initial ?? {}),
+  )
   return { value, setValue }
 }

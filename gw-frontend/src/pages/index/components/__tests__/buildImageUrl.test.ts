@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 // invariant that thumb and big URLs differ ONLY in the size param.
 import { buildImageUrl } from '../MultiBandDataPanel'
 import type { OrderedEntry } from '@/util/bandOrder'
+import { DEFAULT_DISPLAY_PARAMS } from '@/components/DisplayControls/types'
 
 // Minimal OrderedEntry helpers
 // getHipsId is case-sensitive: DSS2-Blue, h (lowercase), W1, etc.
@@ -209,7 +210,7 @@ describe('R6.61.b buildImageUrl factory', () => {
     })
   })
 
-  describe('contrastAdjust param propagates into cuts', () => {
+  describe('per-band DisplayParams propagate into cuts', () => {
     const e = rgb(
       '2MASS',
       '/pipeline/merge-rgb?size=400',
@@ -221,19 +222,50 @@ describe('R6.61.b buildImageUrl factory', () => {
       'CDS/P/2MASS/color',
     )
 
-    it('non-zero contrast slider changes r_q_low/r_q_high values', () => {
-      // slider=50 → shift = (50/100) * 99 * 0.3 = 14.85 → clearly different cuts.
-      // (slider=0.5 was too small: shift=0.0015, rounded to '0.5' in URL)
+    // R6.104-K (T16): replaces the R6.27g scalar-slider test. The slider
+    // (-100..100) is now an explicit DisplayParams override, so "slider=50
+    // widened the window" is written as the concrete cuts it produced
+    // (q_low clamped to 0, q_high clamped to 100).
+    it('a per-channel override changes only that channel\'s cuts', () => {
       const uDefault = buildImageUrl(e, 400, RA, DEC, {}, 'high')
-      const uSlid = buildImageUrl(e, 400, RA, DEC, { H: 50 }, 'high')
-      // Default vs slid should produce different cut values
-      // Default: cuts from HIPS_PROFILE (0.5-99.5). Slider=50 → shift = 14.85
-      // → q_low clamped to 0, q_high = 99.5 + 14.85 = clamped to 100.
-      // So URL should show 'r_q_low=0' (default 0.5) and 'r_q_high=100' (default 99.5).
+      const uOverride = buildImageUrl(
+        e,
+        400,
+        RA,
+        DEC,
+        {
+          H: { ...DEFAULT_DISPLAY_PARAMS, minCut: 0, maxCut: 100 },
+        },
+        'high',
+      )
+
+      // 2MASS profile default is asinh with 0.5 / 99.5 on EVERY channel.
       expect(uDefault).toContain('r_q_low=0.5')
-      expect(uSlid).toContain('r_q_low=0')
       expect(uDefault).toContain('r_q_high=99.5')
-      expect(uSlid).toContain('r_q_high=100')
+
+      // H overridden -> R changes ...
+      expect(uOverride).toContain('r_q_low=0&')
+      expect(uOverride).toContain('r_q_high=100')
+      expect(uOverride).not.toContain('r_q_low=0.5')
+      // ... while G and B keep the profile default (per-channel, not global).
+      expect(uOverride).toContain('g_q_low=0.5')
+      expect(uOverride).toContain('g_q_high=99.5')
+      expect(uOverride).toContain('b_q_low=0.5')
+      expect(uOverride).toContain('b_q_high=99.5')
+    })
+
+    it('a per-channel stretch override reaches only r/g/b_stretch', () => {
+      const u = buildImageUrl(
+        e,
+        400,
+        RA,
+        DEC,
+        { J: { ...DEFAULT_DISPLAY_PARAMS, stretch: 'log' } },
+        'high',
+      )
+      expect(u).toContain('r_stretch=asinh') // H untouched
+      expect(u).toContain('g_stretch=log') // J overridden
+      expect(u).toContain('b_stretch=asinh') // K untouched
     })
   })
 

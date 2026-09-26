@@ -1401,15 +1401,20 @@ button:focus-visible,
   }
 }
 
-/* ===== R6.27g: MultiBandDataPanel DS9-style manual contrast slider ===== */
-.mbp-thumb-contrast:hover .mbp-thumb-slider {
-  opacity: 1 !important;
+/* ===== R6.104-K (T16): MultiBandDataPanel per-tile DisplayControls ===== */
+/* Replaces the R6.27g hover Slider (.mbp-thumb-contrast / .mbp-thumb-slider):
+   each tile now shows an always-visible cut-window badge that opens a
+   DisplayControls popover. */
+.mbp-thumb-display button:hover {
+  color: #00f0ff !important;
 }
-.mbp-thumb-contrast .mbp-thumb-slider:hover {
-  opacity: 1 !important;
+.mbp-thumb-display button:focus-visible {
+  outline: 1px solid rgba(0, 240, 255, 0.6);
+  outline-offset: 1px;
 }
-.mbp-thumb-slider .ant-slider {
-  margin: 0 !important;
+.mbp-thumb-display .ant-popover-inner {
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 /* ===== R6.29: Always-visible horizontal scrollbar for thumbnail strip ===== */

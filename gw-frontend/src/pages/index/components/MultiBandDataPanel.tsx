@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Empty, Tooltip, Grid, Segmented, Slider } from 'antd'
+import { Empty, Tooltip, Grid, Segmented, Popover } from 'antd'
 import { LoadingOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 
 import { useRequest } from 'ahooks'
@@ -16,17 +16,16 @@ import PreloadSplash from '@/components/PreloadSplash'
 // Bypasses React reconciliation entirely — slider drag paints at the
 // browser's native rate (< 16ms instead of 50-200ms).
 import { useContrastDOM } from '@/hooks/useContrastDOM'
-import { DEFAULT_DISPLAY_PARAMS, type DisplayParams } from '@/components/DisplayControls/types'
-
-// R6.104-K T13 bridge: legacy scalar contrast (-100..100) -> DisplayParams.
-// Temporary — T16 replaces contrastAdjust with per-band DisplayParams.
-function scalarDisplayParams(v: number): DisplayParams {
-  return {
-    ...DEFAULT_DISPLAY_PARAMS,
-    contrast: 1 + v / 100,
-    brightness: v / 200,
-  }
-}
+import {
+  DEFAULT_DISPLAY_PARAMS,
+  FALLBACK_DISPLAY_PARAMS,
+  clampDisplayParams,
+  type DisplayParams,
+  type StretchType,
+} from '@/components/DisplayControls/types'
+// R6.104-K (T16): the shared AladinLite-style control surface. Also used by
+// FireflyViewer, so both consumers stay in lockstep (R6.104-K-A SSOT).
+import { DisplayControls } from '@/components/DisplayControls'
 
 type ViewerType = 'aladin' | 'firefly' // R6.8a: 'image' tab removed
 // R6.8a: only Aladin (FITS overlay + WCS + HiPS) and Firefly (HiPS-native
@@ -111,45 +110,27 @@ function hipsCutoutUrlImpl(
   hips: string,
   ra: number,
   dec: number,
-  size = 400,
-  stretch = 'linear',
-  // R6.27j: REAL DS9 fix. The CORRECT CDS hips2fits parameter names are
-  // `min_cut` and `max_cut` (NOT `pixel_cut_min`/`pixel_cut_max` as R6.27i.d
-  // wrongly assumed). Empirical proof — md5 of returned JPEG:
-  //   no params                    → a39fe72e (30365 bytes)
-  //   pixel_cut_min=0&...=200      → a39fe72e (30365 bytes, IGNORED)
-  //   cut_min=0&cut_max=200        → a39fe72e (30365 bytes, IGNORED)
-  //   datamin=0&datamax=200        → a39fe72e (30365 bytes, IGNORED)
-  //   min_cut=0.5%&max_cut=99.5%   → a39fe72e (30365 bytes, = CDS default)
-  //   min_cut=1.5%&max_cut=99%     → 9a18a36b (34164 bytes, CHANGED! ✓)
-  //   min_cut=0%&max_cut=99%       → f2a9caa4 (20252 bytes, CHANGED! ✓)
-  //   min_cut=0&max_cut=200 (abs)  → 2f2250b8 (6020 bytes, CHANGED! ✓ but clipped to 4 unique grays)
-  //
-  // Values are passed as percentile strings ('1.5%', '99%') which CDS
-  // computes server-side from the actual histogram. This is the same
-  // conceptual operation as DS9's "scale limits" — but operating on the
-  // pre-rendered HiPS tile values (NOT raw FITS), so it's a percentile
-  // remap, not a true float-precision render.
-  minCutPct?: number,
-  maxCutPct?: number,
+  size: number,
+  display: DisplayParams,
   // R6.27k: 'standard' = direct CDS (fast jpg ~30KB).
   //          'high'     = backend /pipeline/hips-float (raw FITS + dither, ~175KB PNG).
   //                     Trades 5.8x volume for: float-precision cuts (no banding)
   //                     + Floyd-Steinberg dithering (no posterization) +
-  //                     lossless PNG (no JPEG DCT blocks). Used to be impossible
-  //                     with our HiPS-tiles-only path; backend now reads raw
-  //                     32-bit FITS via CDS hips2fits?format=fits.
+  //                     lossless PNG (no JPEG DCT blocks).
   quality: 'standard' | 'high' = 'standard',
 ): string {
   // CDS hips2fits wants a single combined 'hips' parameter, NOT survey+band.
   // R6.27g bug: I split 'DSS2/Blue' into survey=DSS2&band=Blue, which 400s
   // with 'Missing parameter: hips'. Fixed: pass the full string.
   // Examples: 'DSS2/Blue', 'allWISE/W4', 'NVSS', '2MASS/K'.
+  const cuts = cutsForDisplay(display)
 
   if (quality === 'high') {
     // R6.27k: route to backend FITS+PNG pipeline.
     // Backend reads raw 32-bit FITS, applies our cut+stretch+dither, returns PNG.
-    // hips parameter for backend is survey+band separated (NOT merged).
+    // R6.104-K: the backend now owns the whole AladinLite post-stretch chain
+    // (gamma -> brightness -> contrast -> saturation) and the dual cut mode,
+    // so every DisplayParams field travels as a query param on this path.
     const [survey, band] = hips.split('/')
     const params = new URLSearchParams({
       survey, // e.g. 'allWISE'
@@ -157,15 +138,43 @@ function hipsCutoutUrlImpl(
       ra: String(ra),
       dec: String(dec),
       size: String(size),
-      stretch,
+      stretch: display.stretch,
       dither: 'true', // always dither in high mode
+      cut_mode: display.cutMode,
+      gamma: String(display.gamma),
+      brightness: String(display.brightness),
+      contrast: String(display.contrast),
+      saturation: String(display.saturation),
     })
-    if (minCutPct !== undefined) params.set('min_cut_pct', String(minCutPct))
-    if (maxCutPct !== undefined) params.set('max_cut_pct', String(maxCutPct))
+    // R6.104-K: dual cut mode. percent -> *_cut_pct (server-side percentile of
+    // the fetched FITS); absolute -> min_cut_abs / max_cut_abs in [0, 65535].
+    if (cuts.percent) {
+      // hips.py:184-185 declares min_cut_pct in [0, 49] and max_cut_pct in
+      // [51, 100] -- the window must straddle the median -- and FastAPI 422s
+      // otherwise. Clamp so a UI value outside that range degrades to the
+      // nearest legal window instead of failing the request outright.
+      if (!cuts.auto) {
+        params.set(
+          'min_cut_pct',
+          String(Math.max(0, Math.min(49, cuts.minPct ?? 0))),
+        )
+        params.set(
+          'max_cut_pct',
+          String(Math.max(51, Math.min(100, cuts.maxPct ?? 100))),
+        )
+      }
+    } else {
+      params.set('min_cut_abs', String(cuts.minAbs))
+      params.set('max_cut_abs', String(cuts.maxAbs))
+    }
     return `/pipeline/hips-float?${params.toString()}`
   }
 
-  // Standard path (R6.27j): direct CDS jpg.
+  // Standard path (R6.27j): direct CDS jpg, fetched by the browser.
+  // R6.104-K: CDS hips2fits understands ONLY stretch + min_cut/max_cut.
+  // gamma / brightness / contrast / saturation are applied client-side as a
+  // CSS filter by useContrastDOM (spec 5.2). Colormap is not representable on
+  // this path either -- CDS serves an 8-bit grayscale JPEG.
   const params = new URLSearchParams({
     hips, // e.g. 'DSS2/Blue'
     ra: String(ra),
@@ -173,11 +182,16 @@ function hipsCutoutUrlImpl(
     width: String(size),
     height: String(size),
     fov: String(Math.max(0.01, 3 * (size / 400))), // scale fov with size
-    stretch,
+    stretch: cdsStretchFor(display.stretch),
     format: 'jpg',
   })
-  if (minCutPct !== undefined) params.set('min_cut', `${minCutPct}%`)
-  if (maxCutPct !== undefined) params.set('max_cut', `${maxCutPct}%`)
+  // Absolute cuts are not representable on this path (CDS takes percentiles
+  // only), so an absolute cutMode falls back to CDS's own window -- which is
+  // what `auto` already expresses.
+  if (cuts.percent && !cuts.auto) {
+    params.set('min_cut', `${cuts.minPct}%`)
+    params.set('max_cut', `${cuts.maxPct}%`)
+  }
   return `${HIPS_PROXY_URL}?${params.toString()}`
 }
 
@@ -273,18 +287,100 @@ const HIPS_PROFILE: Record<string, HipsBandProfile> = {
   // R6.104-K-C: NEW surveys (per user 2026-09-25 brainstorm).
   // Unknown surveys fall back to FALLBACK_DISPLAY_PARAMS (asinh + 3%/99.7%).
   '2MASS-color': { stretch: 'asinh', cutMinPct: 0.5, cutMaxPct: 99.5 }, // same as 2MASS grayscale
-  'Gaia-DR3': { stretch: 'log', cutMinPct: 0.1, cutMaxPct: 99.9 },       // Gaia has wide dynamic range
+  'Gaia-DR3': { stretch: 'log', cutMinPct: 0.1, cutMaxPct: 99.9 }, // Gaia has wide dynamic range
   'NVSS-color': { stretch: 'linear' },
-  'Planck-LFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 },      // CMB -> asinh
-  'Planck-HFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 },      // CMB -> asinh
+  'Planck-LFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 }, // CMB -> asinh
+  'Planck-HFI': { stretch: 'asinh', cutMinPct: 1, cutMaxPct: 99 }, // CMB -> asinh
 }
 
-// R6.27g: bands whose tile gets a CSS-filter slider for DS9-style manual
-// contrast. Per-survey HIPS_STRETCH is server-side (linear/log/asinh/sqrt)
-// and not always enough — e.g. W4 (22um Far-IR) still looks blocky after
-// asinh because tile boundary artifacts come through. CSS filter is instant
-// client-side, no re-fetch needed.
-const NEEDS_MANUAL_CONTRAST = new Set(['Far-IR', 'Mid-IR', 'Near-IR'])
+// R6.104-K (T16): CDS hips2fits VALIDATES `stretch` and rejects the
+// backend-only stretches (pow2, equalization) with HTTP 400 -- even though it
+// returns raw FITS regardless. Mirror the backend's resolve_cds_stretch() so
+// the direct-CDS path degrades to linear instead of 400ing.
+const CDS_STRETCH: Record<StretchType, string> = {
+  linear: 'linear',
+  sqrt: 'sqrt',
+  log: 'log',
+  asinh: 'asinh',
+  pow2: 'linear',
+  equalization: 'linear',
+}
+function cdsStretchFor(s: StretchType): string {
+  return CDS_STRETCH[s] ?? 'linear'
+}
+
+// R6.104-K (T16): survey profile -> full DisplayParams. A profile with no
+// explicit cuts yields the "no cut" sentinels -- minCut -1 (Auto) and
+// maxCut 100 (identity) -- which cutsForDisplay() omits from the URL entirely,
+// keeping DSS2 / SDSS / LEGACY / NVSS byte-identical to pre-R6.104-K output.
+// A survey with no profile entry gets FALLBACK_DISPLAY_PARAMS
+// (R6.104-K-C: asinh + 3% / 99.7%).
+function profileDisplayParams(survey: string): DisplayParams {
+  const prof = HIPS_PROFILE[survey]
+  if (!prof) return FALLBACK_DISPLAY_PARAMS
+  return {
+    ...DEFAULT_DISPLAY_PARAMS,
+    stretch: (prof.stretch as StretchType) || DEFAULT_DISPLAY_PARAMS.stretch,
+    minCut: prof.cutMinPct ?? -1,
+    maxCut: prof.cutMaxPct ?? 100,
+  }
+}
+
+// R6.104-K-A (SSOT): resolve the DisplayParams for one band / channel key.
+// A user override stored in `displayByBand` wins; otherwise the survey profile.
+function displayFor(
+  displayByBand: Record<string, DisplayParams> | undefined,
+  survey: string,
+  key: string,
+): DisplayParams {
+  return displayByBand?.[key] ?? profileDisplayParams(survey)
+}
+
+// R6.104-K (T16): "no explicit window" is the sentinel PAIR
+// (minCut === -1 AND maxCut >= 100). It has to be detected as a pair: maxCut
+// 100 on its own is a legitimate request for "no top clipping" (and
+// min_cut_pct/max_cut_pct both accept the extremes server-side), while
+// minCut -1 on its own just means "no bottom clipping".
+function isAutoWindow(d: DisplayParams): boolean {
+  return d.cutMode === 'percent' && d.minCut === -1 && d.maxCut >= 100
+}
+
+// R6.104-K (T16): the tile badge text. Deliberately routed through
+// isAutoWindow() rather than a local `maxCut >= 100` test so the badge reports
+// exactly what the URL builders will send.
+function displayCutLabel(d: DisplayParams | null): string {
+  if (!d) return ''
+  if (d.cutMode === 'absolute') return `${d.minCut}-${d.maxCut}`
+  if (isAutoWindow(d)) return 'Auto'
+  const lo = d.minCut === -1 ? 'Auto' : d.minCut
+  const hi = d.maxCut >= 100 ? 'Auto' : `${d.maxCut}%`
+  return `${lo}-${hi}`
+}
+
+// R6.104-K (T16): DisplayParams -> concrete cut values for one render request.
+//   percent, auto     -- let the renderer pick its own percentile window.
+//   percent, explicit -- percentile bounds; minCut -1 (no bottom clipping) is
+//                        expressed as percentile 0, its explicit equivalent.
+//   absolute          -- raw pixel bounds in [0, 65535], forwarded as-is.
+interface DisplayCuts {
+  percent: boolean
+  auto?: boolean
+  minPct?: number
+  maxPct?: number
+  minAbs?: number
+  maxAbs?: number
+}
+function cutsForDisplay(d: DisplayParams): DisplayCuts {
+  if (d.cutMode === 'absolute') {
+    return { percent: false, minAbs: d.minCut, maxAbs: d.maxCut }
+  }
+  if (isAutoWindow(d)) return { percent: true, auto: true }
+  return {
+    percent: true,
+    minPct: d.minCut === -1 ? 0 : d.minCut,
+    maxPct: d.maxCut,
+  }
+}
 
 // R6.27j: REAL DS9 fix. Use correct CDS parameter names `min_cut`/`max_cut`
 // with percentile values. See hipsCutoutUrlImpl for empirical md5 proof that
@@ -293,40 +389,38 @@ function hipsCutoutUrl(
   hips: string,
   ra: number,
   dec: number,
-  size = 400,
-  stretch = 'linear',
-  minCutPct?: number,
-  maxCutPct?: number,
+  size: number,
+  display: DisplayParams,
   quality: 'standard' | 'high' = 'standard',
 ): string {
-  return hipsCutoutUrlImpl(
-    hips,
-    ra,
-    dec,
-    size,
-    stretch,
-    minCutPct,
-    maxCutPct,
-    quality,
-  )
+  return hipsCutoutUrlImpl(hips, ra, dec, size, display, quality)
 }
 
-// R6.29c: map slider value (-100 to +100) to per-channel percentile cuts.
-// slider = 0: identity (use HIPS_PROFILE defaults)
-// slider > 0: tighten cuts (q_low up, q_high down) -> more contrast
-// slider < 0: loosen cuts (q_low down, q_high up) -> less contrast
+// R6.104-K (T16): DisplayParams -> per-channel percentile cuts for the backend
+// /pipeline/merge-rgb HiPS mode (r_q_low / r_q_high / ...). Replaces the R6.29c
+// scalar-slider shift; the percentile values are now explicit.
+//   percent  -- -1 (Auto) and >= 100 fall back to the survey defaults.
+//   absolute -- merge-rgb takes ONE global min_cut_abs / max_cut_abs pair, not
+//               one per channel, so per-channel absolute cuts are not
+//               representable; fall back to the survey percentile defaults.
 function contrastToCuts(
-  sliderVal: number | undefined,
+  display: DisplayParams,
   defaultLow: number,
   defaultHigh: number,
 ): { qLow: number; qHigh: number } {
-  if (sliderVal === undefined || sliderVal === 0)
+  // absolute: merge-rgb takes ONE global min_cut_abs / max_cut_abs pair rather
+  // than one per channel, so a per-channel absolute cut is not representable.
+  // auto: no explicit window -> let the survey defaults stand.
+  if (display.cutMode === 'absolute' || isAutoWindow(display)) {
     return { qLow: defaultLow, qHigh: defaultHigh }
-  const range = defaultHigh - defaultLow
-  const shift = (sliderVal / 100) * range * 0.3
-  const qLow = Math.max(0, Math.min(50, defaultLow - shift))
-  const qHigh = Math.max(50, Math.min(100, defaultHigh + shift))
-  return { qLow, qHigh }
+  }
+  // The per-channel r_q_low/g_q_low/... overrides carry no ge/le in
+  // server.py:1401-1406 (only their fallback q_low is bounded), so these
+  // values pass through unclamped.
+  return {
+    qLow: display.minCut === -1 ? defaultLow : display.minCut,
+    qHigh: display.maxCut,
+  }
 }
 
 // R6.29c: extract per-band HiPS channel name from a HiPS string like 'allWISE/W4' -> 'W4'
@@ -344,7 +438,7 @@ function hipsIdForEntry(e: OrderedEntry): string {
 // R6.2 lean + R6.6 HiPS-preferred + R6.7a per-survey stretch:
 // thumb URL is a pure function.
 // R6.61.b: shared factory function. Pure function of (entry, size, coords,
-// contrastAdjust, quality) → URL. thumbUrl and largeImageUrl are thin wrappers
+// displayByBand, quality) → URL. thumbUrl and largeImageUrl are thin wrappers
 // that pick the size. This guarantees thumb and big URLs differ ONLY in the
 // size param when all other inputs match (testable invariant).
 //
@@ -363,10 +457,12 @@ export function buildImageUrl(
   size: number,
   ra?: number,
   dec?: number,
-  contrastAdjust?: Record<string, number>,
+  displayByBand?: Record<string, DisplayParams>,
   quality: 'standard' | 'high' = 'standard',
 ): string {
   // R6.27i.d: per-survey DS9 pixel-level profile (stretch + cut).
+  // R6.104-K (T16): the profile is now only the DEFAULT -- a user override
+  // stored in displayByBand wins (see displayFor / profileDisplayParams).
   const profile = HIPS_PROFILE[e.survey] || { stretch: 'asinh' }
 
   if (e.kind === 'rgb') {
@@ -375,27 +471,28 @@ export function buildImageUrl(
       // R6.28: per-channel Hi-Q routing. When quality=='high' AND rgbChannels,
       // route to backend /pipeline/merge-rgb?mode=hips for FITS-based rendering.
       if (quality === 'high' && e.rgbChannels) {
-        // R6.29c: apply per-channel contrast slider values to cuts.
-        const rBand = hipsBandName(e.rgbChannels.r)
-        const gBand = hipsBandName(e.rgbChannels.g)
-        const bBand = hipsBandName(e.rgbChannels.b)
+        // R6.104-K: per-channel DisplayParams drive the cuts (replacing the
+        // R6.29c scalar slider -> contrastToCuts shift).
+        const rD = displayFor(
+          displayByBand,
+          e.survey,
+          hipsBandName(e.rgbChannels.r),
+        )
+        const gD = displayFor(
+          displayByBand,
+          e.survey,
+          hipsBandName(e.rgbChannels.g),
+        )
+        const bD = displayFor(
+          displayByBand,
+          e.survey,
+          hipsBandName(e.rgbChannels.b),
+        )
         const defaultLow = profile.cutMinPct ?? 0.5
         const defaultHigh = profile.cutMaxPct ?? 99.5
-        const rCuts = contrastToCuts(
-          contrastAdjust?.[rBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const gCuts = contrastToCuts(
-          contrastAdjust?.[gBand],
-          defaultLow,
-          defaultHigh,
-        )
-        const bCuts = contrastToCuts(
-          contrastAdjust?.[bBand],
-          defaultLow,
-          defaultHigh,
-        )
+        const rCuts = contrastToCuts(rD, defaultLow, defaultHigh)
+        const gCuts = contrastToCuts(gD, defaultLow, defaultHigh)
+        const bCuts = contrastToCuts(bD, defaultLow, defaultHigh)
         const params = new URLSearchParams({
           mode: 'hips',
           r_hips: e.rgbChannels.r,
@@ -404,9 +501,9 @@ export function buildImageUrl(
           ra: String(ra),
           dec: String(dec),
           size: String(size),
-          r_stretch: profile.stretch,
-          g_stretch: profile.stretch,
-          b_stretch: profile.stretch,
+          r_stretch: rD.stretch,
+          g_stretch: gD.stretch,
+          b_stretch: bD.stretch,
           r_q_low: String(rCuts.qLow),
           g_q_low: String(gCuts.qLow),
           b_q_low: String(bCuts.qLow),
@@ -421,13 +518,11 @@ export function buildImageUrl(
         ra,
         dec,
         size,
-        profile.stretch,
-        profile.cutMinPct,
-        profile.cutMaxPct,
+        displayFor(displayByBand, e.survey, e.hipsColor),
         quality,
       )
     }
-    // RGB non-HiPS-color: /pipeline/merge-rgb?size=N → substitute with our size.
+    // RGB non-HiPS-color: /pipeline/merge-rgb?size=N -> substitute with our size.
     const base = getImageUrl(e.url)
     return base.replace(/size=\d+/, `size=${size}`)
   }
@@ -439,9 +534,7 @@ export function buildImageUrl(
         ra,
         dec,
         size,
-        profile.stretch,
-        profile.cutMinPct,
-        profile.cutMaxPct,
+        displayFor(displayByBand, e.survey, e.item.band || ''),
         quality,
       )
     }
@@ -461,14 +554,14 @@ function thumbUrl(
   e: OrderedEntry,
   ra?: number,
   dec?: number,
-  contrastAdjust?: Record<string, number>,
+  displayByBand?: Record<string, DisplayParams>,
   quality: 'standard' | 'high' = 'standard',
 ): string {
   const hipsBased =
     (e.kind === 'rgb' && !!e.hipsColor) ||
     (e.kind === 'band' && !!getHipsId(e.survey, e.item.band || ''))
   const size = hipsBased ? THUMB_HIPS_SIZE : THUMB
-  return buildImageUrl(e, size, ra, dec, contrastAdjust, quality)
+  return buildImageUrl(e, size, ra, dec, displayByBand, quality)
 }
 
 // R6.16: per-survey LARGE_SIZE. Each survey has its own sweet spot:
@@ -498,14 +591,14 @@ function largeImageUrl(
   e: OrderedEntry,
   ra?: number,
   dec?: number,
-  contrastAdjust?: Record<string, number>,
+  displayByBand?: Record<string, DisplayParams>,
   quality: 'standard' | 'high' = 'standard',
 ): string {
   const size = LARGE_SIZE_BY_SURVEY[e.survey] || LARGE_SIZE_DEFAULT
   // R6.28: RGB HiPS uses per-survey Hi-Q (e.g. 2MASS=high); otherwise caller quality.
   const q =
     e.kind === 'rgb' && e.hipsColor ? getHipsQuality(e.hipsColor) : quality
-  return buildImageUrl(e, size, ra, dec, contrastAdjust, q)
+  return buildImageUrl(e, size, ra, dec, displayByBand, q)
 }
 
 // R6.27k: Image quality toggle. Two-state pill button.
@@ -624,8 +717,11 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     ]
     return bands.some((b) => {
       if (!b) return false
-      const v = contrastAdjust[b]
-      return v !== undefined && v !== 0
+      // R6.104-K: a channel counts as "being adjusted" once it has a stored
+      // DisplayParams override at all. The R6.27g version compared the scalar
+      // slider against 0; every non-default override is now meaningful, so
+      // the mere presence of an entry is the signal.
+      return bandDisplay[b] !== undefined
     })
   }
   // Active re-render = component band being adjusted AND img in flight
@@ -634,14 +730,29 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     return rgbIsAdjusting(entry) && imgLoading.has(idx)
   }
 
-  // R6.27g: per-band manual contrast adjustment, persisted in localStorage.
-  // Key format: band name (e.g. 'W4'). Value: -100..100 (0=neutral).
-  // Applied via CSS `filter: contrast(X) brightness(Y)` — instant, no re-fetch.
-  const [contrastAdjust, setContrastAdjust] = useState<Record<string, number>>(
+  // R6.104-K (T16): per-band DisplayParams replace the R6.27g scalar contrast.
+  // Key = band name (e.g. 'W4'). An absent key means "use the survey profile
+  // default" (profileDisplayParams), so nothing is stored until the user
+  // actually tunes that band. Persisted in localStorage.
+  const [bandDisplay, setBandDisplay] = useState<Record<string, DisplayParams>>(
     () => {
       try {
-        const raw = localStorage.getItem('gw-thumb-contrast')
-        return raw ? JSON.parse(raw) : {}
+        const raw = localStorage.getItem('gw-band-display')
+        if (raw) return JSON.parse(raw)
+        // R6.104-K migration: seed from the R6.27g scalar slider (-100..100) so
+        // a session that already tuned contrast keeps those values on upgrade.
+        const legacy = localStorage.getItem('gw-thumb-contrast')
+        if (!legacy) return {}
+        const scalars: Record<string, number> = JSON.parse(legacy)
+        const seeded: Record<string, DisplayParams> = {}
+        for (const band of Object.keys(scalars)) {
+          const v = scalars[band]
+          seeded[band] = clampDisplayParams({
+            contrast: 1 + v / 100,
+            brightness: v / 200,
+          })
+        }
+        return seeded
       } catch {
         return {}
       }
@@ -674,22 +785,29 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
   useEffect(() => {
     setHipsQuality(quality)
   }, [quality])
-  const updateContrast = (band: string, value: number) => {
-    setContrastAdjust((prev) => {
-      const next = { ...prev, [band]: value }
+  // R6.104-K (T16): write one band's DisplayParams and persist the whole map.
+  // The CSS-only axes (contrast / brightness / saturation) are ALSO pushed to
+  // the DOM synchronously by the caller via contrastDOM.setDisplay, preserving
+  // R6.27i's ms-level response; this React update is what rebuilds the URL for
+  // the server-rendered axes (stretch / cuts / Hi-Q gamma).
+  const setDisplayForBand = (band: string, next: DisplayParams) => {
+    setBandDisplay((prev) => {
+      const merged = { ...prev, [band]: next }
       try {
-        localStorage.setItem('gw-thumb-contrast', JSON.stringify(next))
+        localStorage.setItem('gw-band-display', JSON.stringify(merged))
       } catch {
         // localStorage may throw (private mode, quota); silent ignore
       }
-      return next
+      return merged
     })
   }
 
-  // R6.27i: direct-DOM contrast updates. Slider drag goes here — it mutates
-  // img.style.filter directly, bypassing React. React state updateContrast
-  // runs in parallel purely for localStorage persistence (visual update is
-  // decoupled from React reconciliation).
+  // R6.27i: direct-DOM contrast updates. Control drag goes here — it mutates
+  // img.style.filter directly, bypassing React. The React state write
+  // (setDisplayForBand) runs in parallel for localStorage persistence and for
+  // the server-rendered axes (stretch / cuts / Hi-Q gamma), which live in the
+  // URL and therefore DO need a re-render. Visual update of the CSS axes stays
+  // decoupled from React reconciliation.
   const contrastDOM = useContrastDOM()
 
   // R6.9b: filter out tiles whose thumbnail failed to load (broken image).
@@ -790,14 +908,15 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
   const imageUrl = useMemo(() => {
     if (rgbIndex !== null) {
       const e = entries[rgbIndex]
-      // R6.29d: pass contrastAdjust so RGB big viewer re-renders on slider drag
+      // R6.104-K: pass bandDisplay so the big viewer re-renders when a band's
+      // DisplayParams change (server-rendered axes land in the URL).
       // R6.30: pass per-tile quality (respects forceStdTiles for big viewer)
       if (e && e.kind === 'rgb')
         return largeImageUrl(
           e,
           ra,
           dec,
-          contrastAdjust,
+          bandDisplay,
           qualityForEntry(e, rgbIndex),
         )
     }
@@ -808,7 +927,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
           e,
           ra,
           dec,
-          contrastAdjust,
+          bandDisplay,
           qualityForEntry(e, selected[0]),
         )
     }
@@ -817,7 +936,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     // which are already tracked via deps; adding qualityForEntry as a
     // dep would re-memo every render. Mark as intentionally omitted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rgbIndex, selected, entries, ra, dec, contrastAdjust])
+  }, [rgbIndex, selected, entries, ra, dec, bandDisplay])
 
   // R6.27i: resolve the active band name (the band whose thumbnail is
   // currently shown in the big viewer). For RGB composites or no selection,
@@ -831,13 +950,24 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     return null
   }, [rgbIndex, selected, entries])
 
+  // R6.104-K (T16): the active band's DisplayParams -- user override, else the
+  // survey profile default. currentBand is null for RGB composites and
+  // empty selections, so those fall back to the identity defaults.
+  const currentDisplay = useMemo<DisplayParams>(() => {
+    if (!currentBand) return DEFAULT_DISPLAY_PARAMS
+    const e = selected.length === 1 ? entries[selected[0]] : undefined
+    return e
+      ? displayFor(bandDisplay, e.survey, currentBand)
+      : DEFAULT_DISPLAY_PARAMS
+  }, [currentBand, bandDisplay, entries, selected])
+
   // R6.27i: sync the hook's activeBandRef whenever currentBand changes so
-  // subsequent setContrast calls only target the right image. We also
-  // re-apply the current persisted value here so the big image inherits
-  // the latest slider state after a band switch (otherwise the new image
-  // would show without the filter until the user moves the slider again).
+  // subsequent setDisplay calls only target the right image. We also
+  // re-apply the band's DisplayParams here so the big image inherits the
+  // latest state after a band switch (otherwise the new image would show
+  // without the filter until the user touches a control again).
   //
-  // Note: `contrastDOM` is intentionally NOT in the deps array — it's a
+  // Note: `contrastDOM` is intentionally NOT in the deps array -- it's a
   // new object every render (literal returned from useContrastDOM), so
   // including it would re-fire this effect on every render. The hook's
   // internal refs/callbacks are stable, so we can use them via a ref.
@@ -847,15 +977,13 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
     const dom = contrastDOMRef.current
     dom.setActiveBand(currentBand)
     if (currentBand) {
-      const v = contrastAdjust[currentBand] ?? 0
-      dom.setDisplay(currentBand, scalarDisplayParams(v))
+      dom.setDisplay(currentBand, currentDisplay)
     } else {
-      // No band (RGB composite) — clear any leftover filter on the big image.
+      // No band (RGB composite) -- clear any leftover filter on the big image.
       const big = dom.bigImgRef.current
       if (big) big.style.removeProperty('filter')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBand]) // contrastDOM omitted (stable via ref)
+  }, [currentBand, currentDisplay])
 
   // R6.13: alt text for the big image — descriptive per entry.
   const imageAlt = useMemo(() => {
@@ -1027,6 +1155,51 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                 eager
                 lazy
               />
+              {/* R6.104-K (T16): DisplayControls for the active big image.
+                  Only meaningful for a single-band selection (currentBand);
+                  RGB composites and empty selections have no per-band params. */}
+              {currentBand && (
+                <div
+                  style={{ position: 'absolute', top: 8, right: 8, zIndex: 4 }}
+                >
+                  <Popover
+                    trigger='click'
+                    placement='bottomRight'
+                    title={`Display — ${currentBand}`}
+                    content={
+                      <div style={{ width: 460 }}>
+                        <DisplayControls
+                          compact
+                          showColor={false}
+                          value={currentDisplay}
+                          onChange={(next) => {
+                            // Instant (CSS axes) + persisted / URL-rebuilding.
+                            contrastDOM.setDisplay(currentBand, next)
+                            setDisplayForBand(currentBand, next)
+                          }}
+                        />
+                      </div>
+                    }
+                  >
+                    <button
+                      type='button'
+                      title='Stretch / cuts / gamma for the active band'
+                      style={{
+                        background: 'rgba(0,0,0,0.72)',
+                        border: '1px solid rgba(0,240,255,0.35)',
+                        borderRadius: 4,
+                        color: 'rgba(255,255,255,0.85)',
+                        fontSize: 11,
+                        lineHeight: 1.6,
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Display
+                    </button>
+                  </Popover>
+                </div>
+              )}
             </div>
             {/* R6.19: Firefly always mounted (pre-mounts iframe during splash so
                 firefly.js + first FITS parsed by the time user clicks Firefly tab) */}
@@ -1061,17 +1234,20 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
             // R6.27g: strip 'Far-IR' / 'Mid-IR' / 'Near-IR' spectral-region prefix.
             // User requested: only show the wavelength, e.g. '22 µm'.
             const sub = isBand ? info?.lambda || '' : 'RGB composite'
-            // R6.27g: DS9-style manual contrast (CSS filter, instant).
-            // Only applies to bands in NEEDS_MANUAL_CONTRAST (Far-IR/Mid-IR/Near-IR).
-            // User adjusts via Slider overlay visible on hover.
-            const contrastVal = isBand
-              ? (contrastAdjust[entry.item.band] ?? 0)
-              : 0
-            const imgFilter = NEEDS_MANUAL_CONTRAST.has(info?.color || '')
-              ? `contrast(${1 + contrastVal / 100}) brightness(${1 + contrastVal / 200})`
+            // R6.104-K (T16): per-band DisplayParams replace the R6.27g scalar
+            // slider, and apply to EVERY band (the old slider was limited to
+            // Far/Mid/Near-IR). The CSS-only axes are mirrored onto the <img>
+            // inline style so React and useContrastDOM's direct-DOM writer
+            // agree; the server-rendered axes (stretch / cuts / Hi-Q gamma)
+            // reach the renderer through thumbUrl below.
+            const tileDisplay: DisplayParams | null = isBand
+              ? (bandDisplay[entry.item.band] ??
+                profileDisplayParams(entry.survey))
+              : null
+            const tileFilter = tileDisplay
+              ? contrastDOM.compute(tileDisplay) || 'none'
               : 'none'
-            const showSlider =
-              isBand && NEEDS_MANUAL_CONTRAST.has(info?.color || '')
+            const cutLabel = displayCutLabel(tileDisplay)
             const tip = isBand
               ? `${label} (${info?.lambda || '—'})\nCtrl/Cmd-click for multi-select`
               : `${label} — click to view RGB composite`
@@ -1103,12 +1279,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                   }}
                 >
                   <div
-                    className={
-                      'mbp-thumb-shell' +
-                      (info && NEEDS_MANUAL_CONTRAST.has(info.color || '')
-                        ? ' mbp-thumb-contrast'
-                        : '')
-                    }
+                    className='mbp-thumb-shell'
                     data-band={isBand ? entry.item.band : ''}
                     style={{
                       position: 'relative',
@@ -1131,7 +1302,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                           entry,
                           ra,
                           dec,
-                          contrastAdjust,
+                          bandDisplay,
                           qualityForEntry(entry, idx),
                         )}
                         alt={label}
@@ -1141,7 +1312,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                           width: '100%',
                           height: '100%',
                           objectFit: 'contain',
-                          filter: imgFilter,
+                          filter: tileFilter,
                         }}
                         loading={idx === 0 ? 'eager' : 'lazy'}
                         decoding='async'
@@ -1324,11 +1495,13 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                         />
                       )}
                     </>
-                    {/* R6.27g: DS9-style contrast slider — only for Far/Mid/Near-IR.
-                          Visible on hover (.mbp-thumb-contrast:hover .mbp-thumb-slider). */}
-                    {showSlider && (
+                    {/* R6.104-K (T16): per-tile DisplayControls popover,
+                          replacing the R6.27g hover Slider. The badge shows the
+                          band's current cut window; clicking it opens stretch /
+                          cuts / advanced controls for THAT band only. */}
+                    {isBand && (
                       <div
-                        className='mbp-thumb-slider'
+                        className='mbp-thumb-display'
                         onClick={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -1341,56 +1514,47 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                           bottom: 4,
                           background: 'rgba(0,0,0,0.78)',
                           borderRadius: 4,
-                          padding: '4px 6px',
+                          padding: '2px 4px',
                           zIndex: 3,
-                          opacity: 0,
-                          transition: 'opacity 180ms ease',
                           pointerEvents: 'auto',
+                          textAlign: 'center',
                         }}
                       >
-                        <Slider
-                          min={-100}
-                          max={100}
-                          step={5}
-                          value={contrastVal}
-                          tooltip={{ open: false }}
-                          onChange={(v) => {
-                            const value = v as number
-                            // R6.27i: direct DOM mutation for ms-level response.
-                            contrastDOM.setDisplay(entry.item.band, scalarDisplayParams(value))
-                            // Persist for next session (parallel to the visual update).
-                            updateContrast(entry.item.band, value)
-                          }}
-                          styles={{
-                            track: {
-                              background: 'rgba(255,255,255,0.18)',
-                              height: 3,
-                            },
-                            rail: {
-                              background: 'rgba(255,255,255,0.10)',
-                              height: 3,
-                            },
-                            handle: {
-                              width: 10,
-                              height: 10,
-                              marginTop: -3.5,
-                              background: '#00F0FF',
-                              border: '1px solid #fff',
-                            },
-                          }}
-                        />
-                        <div
-                          style={{
-                            fontSize: 9,
-                            color: 'rgba(255,255,255,0.6)',
-                            textAlign: 'center',
-                            marginTop: -2,
-                            lineHeight: 1,
-                          }}
-                          title='DS9-style cut (percentile window): 0=identity. +ve tightens q_high/q_low (more contrast), -ve loosens (less). Affects this band thumb AND any RGB composite containing this band.'
+                        <Popover
+                          trigger='click'
+                          placement='topLeft'
+                          title={label}
+                          content={
+                            <div style={{ width: 420 }}>
+                              <DisplayControls
+                                compact
+                                showColor={false}
+                                value={tileDisplay ?? FALLBACK_DISPLAY_PARAMS}
+                                onChange={(next) => {
+                                  contrastDOM.setDisplay(entry.item.band, next)
+                                  setDisplayForBand(entry.item.band, next)
+                                }}
+                              />
+                            </div>
+                          }
                         >
-                          cut %
-                        </div>
+                          <button
+                            type='button'
+                            title='Stretch / cut window for this band'
+                            style={{
+                              width: '100%',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'rgba(255,255,255,0.75)',
+                              fontSize: 9,
+                              lineHeight: 1.4,
+                              cursor: 'pointer',
+                              padding: 0,
+                            }}
+                          >
+                            {cutLabel}
+                          </button>
+                        </Popover>
                       </div>
                     )}
                   </div>
