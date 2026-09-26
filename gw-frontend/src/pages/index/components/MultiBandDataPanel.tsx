@@ -1017,14 +1017,15 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                 pointerEvents: viewerType === 'aladin' ? 'auto' : 'none',
               }}
             >
-              {/* R6.99-A: big Aladin image uses eager decode so the
-                  active band's image paints at full speed. Other
-                  (lazy-mount) Aladins get lazy decode. */}
+              {/* R6.104-K (T15): active big image is now click-to-load
+                  (lazy) — partial revert of R6.99-A eager-load. Once
+                  revealed, eager decode still applies for snappy paint. */}
               <Aladin
                 imageUrl={imageUrl}
                 alt={imageAlt}
-                imgRef={contrastDOM.bigImgRef}
+                imgRef={contrastDOM.registerBig}
                 eager
+                lazy
               />
             </div>
             {/* R6.19: Firefly always mounted (pre-mounts iframe during splash so

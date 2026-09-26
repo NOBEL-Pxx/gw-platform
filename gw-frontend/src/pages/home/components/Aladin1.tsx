@@ -5,7 +5,7 @@
 // to keep the boundary component co-located with the consumer so it lives
 // in the SAME chunk and avoids the cross-chunk default-export lookup.
 
-import { Component, type ReactNode } from 'react'
+import { Component, useState, type ReactNode } from 'react'
 
 interface AladinProps {
   // R6.13: parent (MultiBandDataPanel) pre-computes the big-viewer URL using
@@ -21,7 +21,11 @@ interface AladinProps {
   // The parent (useContrastDOM) decides what filter to apply; we just hand
   // out the DOM node. The `filter` prop is kept for SSR / fallback cases
   // (e.g. when the hook isn't used) but is typically undefined now.
-  imgRef?: React.MutableRefObject<HTMLImageElement | null>
+  // R6.104-K (T15-fix): accepts EITHER a plain ref object or a callback ref.
+  // MultiBandDataPanel passes useContrastDOM()'s `registerBig` so that the
+  // stored DisplayParams filter is replayed the moment this <img> mounts --
+  // which, under `lazy`, is only when the user clicks to reveal it.
+  imgRef?: React.Ref<HTMLImageElement>
   // Legacy (R6.27h): CSS filter string passed via prop. Replaced by direct-DOM
   // mutation via useContrastDOM in R6.27i for ms-level response. Kept as
   // fallback for callers that don't use the hook.
@@ -31,6 +35,10 @@ interface AladinProps {
   // paint of the viewer's central tile is snappy. Default false for the
   // thumb strip where lazy decode is fine (browsers handle scroll-into-view).
   eager?: boolean
+  // R6.104-K (T15): when true, the big <img> is NOT eagerly fetched — a
+  // "Click to load high-resolution image" placeholder is shown until the
+  // user clicks (partial revert of R6.99-A eager-load for the active band).
+  lazy?: boolean
 }
 
 // R6.67.4: minimal local ErrorBoundary, co-located to avoid the
@@ -73,14 +81,17 @@ export default function Aladin({
   imgRef,
   filter,
   eager = false,
+  lazy = false,
 }: AladinProps): JSX.Element {
+  const [revealed, setRevealed] = useState(false)
+  const showImg = !lazy || revealed
   return (
     <LocalErrorBoundary>
       <div
         className='w-full h-full relative flex items-center justify-center'
         style={{ minHeight: 420, background: '#000' }}
       >
-        {imageUrl ? (
+        {imageUrl && showImg ? (
           <img
             ref={imgRef}
             src={imageUrl}
@@ -103,6 +114,25 @@ export default function Aladin({
             decoding={eager ? 'sync' : 'async'}
             fetchPriority={eager ? 'high' : 'auto'}
           />
+        ) : imageUrl && lazy && !revealed ? (
+          <div
+            role='button'
+            tabIndex={0}
+            onClick={() => setRevealed(true)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setRevealed(true) }}
+            style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(10,15,36,0.6)',
+              color: 'rgba(255,255,255,0.5)',
+              cursor: 'pointer',
+              fontSize: 13,
+              textAlign: 'center',
+              border: '1px dashed rgba(0,240,255,0.30)',
+            }}
+          >
+            Click to load high-resolution image
+          </div>
         ) : (
           <div className='text-white/40 text-sm'>Select a band to view</div>
         )}
