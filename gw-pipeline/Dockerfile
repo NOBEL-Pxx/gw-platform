@@ -7,7 +7,7 @@ WORKDIR /app
 # System deps for Astropy/scipy compilation (use Tsinghua mirrors for China)
 RUN apt-get update && apt-get install -y --no-install-recommends     gcc g++ libcfitsio-dev && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=120 -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple --extra-index-url https://pypi.org/simple
+RUN pip install --no-cache-dir --default-timeout=120 -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
 COPY src/ src/
 RUN mkdir -p /app/data /app/thumbnail_cache /app/models
 # v4.27: Conditionally exclude GPL-3.0 Zoobot model for clean MIT distribution.
