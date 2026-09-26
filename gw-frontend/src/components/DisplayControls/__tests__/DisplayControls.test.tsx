@@ -65,6 +65,52 @@ describe('DisplayControls', () => {
     )
   })
 
+  it('percent maxCut floors at 0: -1 is a MIN-only sentinel (review regression)', () => {
+    // -1 means "no bottom clipping" and is legal for minCut only. It used to be
+    // accepted for maxCut too, and travelled to np.percentile as q=-1 ->
+    // ValueError -> HTTP 500 on /pipeline/merge-rgb.
+    expect(clampDisplayParams({ cutMode: 'percent', maxCut: -1 }).maxCut).toBe(0)
+    expect(clampDisplayParams({ cutMode: 'percent', maxCut: -50 }).maxCut).toBe(0)
+    // The sentinel must stay legal where it is meaningful.
+    expect(clampDisplayParams({ cutMode: 'percent', minCut: -1 }).minCut).toBe(-1)
+  })
+
+  it('reconciles a degenerate absolute cut window (review M3 regression)', () => {
+    // hips.py 400s on min_cut_abs >= max_cut_abs and the tile then vanishes with
+    // no message. Both sliders clamp to [0, 65535] independently, so the state
+    // was reachable; clampDisplayParams now makes it unrepresentable.
+    const abs = (minCut: number, maxCut: number) =>
+      clampDisplayParams({ cutMode: 'absolute', minCut, maxCut })
+
+    // Crossed pair -> swapped, both requested values preserved.
+    expect(abs(5000, 100)).toMatchObject({ minCut: 100, maxCut: 5000 })
+    // Zero-width -> widened by one level.
+    expect(abs(5000, 5000)).toMatchObject({ minCut: 5000, maxCut: 5001 })
+    // Zero-width at the ceiling -> pulled down. Computing maxCut as minCut + 1
+    // here would emit 65536, which the backend's le=65535 rejects.
+    expect(abs(65535, 65535)).toMatchObject({ minCut: 65534, maxCut: 65535 })
+    // Crossed at the extremes -> still inside [0, 65535].
+    expect(abs(65535, 0)).toMatchObject({ minCut: 0, maxCut: 65535 })
+
+    // Every arm must satisfy the invariant the backend enforces.
+    for (const [lo, hi] of [[5000, 100], [5000, 5000], [65535, 65535], [65535, 0], [1, 2]]) {
+      const r = abs(lo, hi)
+      expect(r.minCut).toBeLessThan(r.maxCut)
+      expect(r.minCut).toBeGreaterThanOrEqual(0)
+      expect(r.maxCut).toBeLessThanOrEqual(65535)
+    }
+  })
+
+  it('leaves the percent window alone, including the -1 Auto sentinel', () => {
+    // Percent mode must NOT be reconciled: minCut = -1 is the legal "Auto / no
+    // bottom clipping" state, and the backend's 0-49 / 51-100 Query bounds
+    // already keep the pair from crossing.
+    expect(clampDisplayParams({ cutMode: 'percent', minCut: -1, maxCut: 100 }))
+      .toMatchObject({ minCut: -1, maxCut: 100 })
+    expect(clampDisplayParams({ cutMode: 'percent', minCut: -1, maxCut: -1 }))
+      .toMatchObject({ minCut: -1, maxCut: 0 })
+  })
+
   it('absolute mode clamps cuts to the [0, 65535] pixel range', () => {
     const lo = clampDisplayParams({ cutMode: 'absolute', minCut: -1 })
     const hi = clampDisplayParams({ cutMode: 'absolute', maxCut: 99999 })

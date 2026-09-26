@@ -45,7 +45,14 @@ from pipeline.stretch_ops import (
     resolve_cds_stretch,
 )
 
-_R6_104K_STRETCH_VALUES = {"linear", "sqrt", "log", "asinh", "pow2", "equalization"}
+# R6.104-K review: "percentile" is accepted by /pipeline/merge-rgb
+# (server.py `_R6_104K_MERGE_STRETCH_VALUES`) and behaves as linear with
+# percentile-derived cuts. Omitting it here made the two endpoints
+# disagree on the legal set -- a caller that worked on one got an
+# unexplained 400 from the other. Kept for backward compat.
+_R6_104K_STRETCH_VALUES = {
+    "linear", "sqrt", "log", "asinh", "pow2", "equalization", "percentile",
+}
 _R6_104K_CUT_MODES = {"percent", "absolute"}
 
 router = APIRouter()
@@ -79,8 +86,17 @@ def _cache_key(survey: str, band: str, ra: float, dec: float, size: int, stretch
 
 def _evict_if_needed() -> None:
     """If cache exceeds MAX_HIPS_CACHE_BYTES, delete oldest files until under 80%."""
+    # R6.104-K review: hips-float writes {key}.png into this same directory
+    # (see the float handler below), so a .jpg-only glob counted nothing and
+    # this evictor saw total=0 forever -- the PNG cache grew without bound,
+    # one new file per distinct parameter set. Count BOTH extensions, as
+    # HIPS_TILE_CACHE_DIR already does.
     try:
-        files = [(p, p.stat().st_mtime, p.stat().st_size) for p in HIPS_CACHE_DIR.glob("*.jpg")]
+        files = [
+            (p, p.stat().st_mtime, p.stat().st_size)
+            for p in list(HIPS_CACHE_DIR.glob("*.jpg"))
+            + list(HIPS_CACHE_DIR.glob("*.png"))
+        ]
     except OSError:
         return
     total = sum(f[2] for f in files)
@@ -391,8 +407,13 @@ async def hips_float(
 @router.get("/hips-stats")
 async def hips_stats():
     """Diagnostic stats: hits, misses, errors, cache size."""
+    # R6.104-K review: count PNGs too -- hips-float stores .png here, and a
+    # .jpg-only glob under-reported the cache as empty.
     try:
-        files = list(HIPS_CACHE_DIR.glob("*.jpg"))
+        files = (
+            list(HIPS_CACHE_DIR.glob("*.jpg"))
+            + list(HIPS_CACHE_DIR.glob("*.png"))
+        )
         total_bytes = sum(p.stat().st_size for p in files)
     except OSError:
         files = []

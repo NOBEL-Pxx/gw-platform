@@ -961,6 +961,19 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
       : DEFAULT_DISPLAY_PARAMS
   }, [currentBand, bandDisplay, entries, selected])
 
+  // R6.104-K review: does the big image come from the server-rendered Hi-Q
+  // path? If so the four coefficients are already baked into that PNG and
+  // the CSS filter must not re-apply them. Mirrors the quality choice in the
+  // largeImageUrl memo above (only a single selected band has per-band
+  // contrast -- currentBand is null for an RGB composite).
+  const activeIsHiQ = useMemo<boolean>(() => {
+    if (currentBand === null || selected.length < 1) return false
+    const e = entries[selected[0]]
+    return e ? qualityForEntry(e, selected[0]) === 'high' : false
+    // R6.57: qualityForEntry closes over forceStdTiles + _currentQuality.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBand, selected, entries])
+
   // R6.27i: sync the hook's activeBandRef whenever currentBand changes so
   // subsequent setDisplay calls only target the right image. We also
   // re-apply the band's DisplayParams here so the big image inherits the
@@ -976,6 +989,9 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
   useEffect(() => {
     const dom = contrastDOMRef.current
     dom.setActiveBand(currentBand)
+    // R6.104-K review: tell the hook which mechanism owns the four
+    // coefficients for this image BEFORE writing its filter.
+    dom.setActiveServerApplied(activeIsHiQ)
     if (currentBand) {
       dom.setDisplay(currentBand, currentDisplay)
     } else {
@@ -983,7 +999,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
       const big = dom.bigImgRef.current
       if (big) big.style.removeProperty('filter')
     }
-  }, [currentBand, currentDisplay])
+  }, [currentBand, currentDisplay, activeIsHiQ])
 
   // R6.13: alt text for the big image — descriptive per entry.
   const imageAlt = useMemo(() => {
@@ -1244,9 +1260,15 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
               ? (bandDisplay[entry.item.band] ??
                 profileDisplayParams(entry.survey))
               : null
-            const tileFilter = tileDisplay
-              ? contrastDOM.compute(tileDisplay) || 'none'
-              : 'none'
+            const entryQuality = qualityForEntry(entry, idx)
+            // R6.104-K review (BLOCKER): the Hi-Q path sends the four
+            // coefficients to the server, which bakes them into the PNG, so
+            // the CSS filter must stay out of it -- otherwise they apply
+            // twice and contrast/saturation square (contrast 2.0 -> ~4.0).
+            const tileFilter =
+              tileDisplay && entryQuality !== 'high'
+                ? contrastDOM.compute(tileDisplay) || 'none'
+                : 'none'
             const cutLabel = displayCutLabel(tileDisplay)
             const tip = isBand
               ? `${label} (${info?.lambda || '—'})\nCtrl/Cmd-click for multi-select`
@@ -1295,7 +1317,16 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                       <img
                         ref={(el) =>
                           isBand
-                            ? contrastDOM.registerThumb(entry.item.band, el)
+                            ? contrastDOM.registerThumb(
+                                entry.item.band,
+                                // R6.104-K review: a Hi-Q tile is rendered
+                                // server-side, so the hook must not own its
+                                // filter. Passing null also DELETES a stale
+                                // entry from when this tile was standard -- the
+                                // inline ref re-fires every render, so the map
+                                // tracks the quality exactly.
+                                entryQuality === 'high' ? null : el,
+                              )
                             : undefined
                         }
                         src={thumbUrl(
@@ -1303,7 +1334,7 @@ function MultiBandDataPanel({ ra, dec, uuid }: Props) {
                           ra,
                           dec,
                           bandDisplay,
-                          qualityForEntry(entry, idx),
+                          entryQuality,
                         )}
                         alt={label}
                         style={{

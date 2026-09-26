@@ -191,10 +191,23 @@ export function DisplayControls({
             label: compact
               ? ''
               : 'Advanced (γ / brightness / contrast / saturation)',
-            children: <AdvancedSliders value={value} onChange={onChange} />,
+            // R6.104-K review (M11): this was the only control in the file
+            // that bypassed the clampDisplayParams wrapper -- 75, 89, 119,
+            // 131, 166, 180 and 181 all route through `set`. The four axis
+            // bounds happen to match the clamp today, so this was latent
+            // rather than active, but it left the SSOT invariant
+            // (R6.104-K-A) non-universal and would break silently the moment
+            // either range moved. AdvancedSliders emits a whole params
+            // object, so clamp it whole.
+            children: (
+              <AdvancedSliders
+                value={value}
+                onChange={(next) => onChange(clampDisplayParams(next))}
+              />
+            ),
           },
         ]}
-        defaultActiveKey={compact ? [] : []} // collapsed by default
+        defaultActiveKey={[]} // collapsed by default (dead ternary removed)
       />
     </div>
   )

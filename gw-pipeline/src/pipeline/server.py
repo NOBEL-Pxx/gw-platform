@@ -1398,12 +1398,17 @@ async def merge_rgb(
     g_stretch: str = Query(None, description="Green channel stretch (overrides stretch)"),
     b_stretch: str = Query(None, description="Blue channel stretch (overrides stretch)"),
     # R6.7b2: per-channel percentile bounds + gamma correction.
-    r_q_low: float = Query(None, description="Red channel lower percentile (overrides q_low)"),
-    r_q_high: float = Query(None, description="Red channel upper percentile (overrides q_high)"),
-    g_q_low: float = Query(None, description="Green channel lower percentile"),
-    g_q_high: float = Query(None, description="Green channel upper percentile"),
-    b_q_low: float = Query(None, description="Blue channel lower percentile"),
-    b_q_high: float = Query(None, description="Blue channel upper percentile"),
+    # R6.104-K review: these six override the bounded q_low/q_high
+    # fallbacks (ge=0.1/le=20.0 and ge=80.0/le=99.9 above) but declared NO
+    # bounds of their own, while both consumers feed them straight to
+    # np.percentile, which accepts only [0, 100]. A negative value reached
+    # numpy as ValueError -> HTTP 500; bound them so it is a 422 instead.
+    r_q_low: float = Query(None, ge=0.0, le=100.0, description="Red channel lower percentile (overrides q_low)"),
+    r_q_high: float = Query(None, ge=0.0, le=100.0, description="Red channel upper percentile (overrides q_high)"),
+    g_q_low: float = Query(None, ge=0.0, le=100.0, description="Green channel lower percentile"),
+    g_q_high: float = Query(None, ge=0.0, le=100.0, description="Green channel upper percentile"),
+    b_q_low: float = Query(None, ge=0.0, le=100.0, description="Blue channel lower percentile"),
+    b_q_high: float = Query(None, ge=0.0, le=100.0, description="Blue channel upper percentile"),
     r_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Red channel gamma correction"),
     g_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Green channel gamma"),
     b_gamma: float = Query(1.0, ge=0.3, le=3.0, description="Blue channel gamma"),
